@@ -1,38 +1,68 @@
-# Stage: ONBOARD (one time per repo)
+# Stage: ONBOARD (run any time — `/pipeline onboard` re-onboards)
 
-Make this repository pipeline-ready WITHOUT writing anything into it. The result
-is a human-confirmed `profile.yml` in the pipeline home (`status` printed its path).
+Make this repository pipeline-ready WITHOUT writing anything into it. The
+result is a developer-confirmed `profile.yml` in the pipeline home
+(`profile_path` from the `pipeline onboard` output). Re-onboarding is the
+normal way to change behavior for a repo: prefill everything from
+`existing_profile`, show current values, ask what to change — NEVER silently
+drop a previous answer.
 
 ## Inputs
-1. The repository itself: build/dependency manifests, linter/test configs, CI
-   config, docs (`README`, `CONTRIBUTING`, agent docs like `CLAUDE.md`/`AGENTS.md`).
-2. Conventional repo-skill locations: `.ai/skills/`, `.claude/skills/`,
-   `.claude/commands/` — plus docs that reference them.
-3. Recent git history and merged PRs (naming conventions, base branch).
-
-## Output
-`profile.yml` in the pipeline home for this repo (path from `pipeline status`).
-Schema: see an annotated example in the framework README.
+1. The `pipeline onboard` JSON: `candidates` (mechanically scanned repo
+   skills, commands, agent docs, knowledge dirs), `existing_profile`,
+   `reonboarding`.
+2. The repository: build/dependency manifests, linter/test configs, CI
+   config, docs.
+3. The developer — this stage is an interview.
 
 ## Procedure
-1. **Detect (evidence first).** From the repo's manifests and configs, list the
-   lint, test, and hook commands this repo actually uses. Every proposal must
-   name its evidence file.
-2. **Verify by execution.** Run each proposed command ONCE (scoped to a small
-   target if it takes arguments). A command that does not run never enters the
-   profile.
-3. **Bind repo assets.** For each pipeline stage, propose: repo asset (a found
-   skill/doc) vs built-in. Ambiguous matches → ask the developer:
-   use-instead / use-alongside / ignore. Record each binding with a content hash.
-4. **Interview — repo facts only.** Base branch, branch/PR naming conventions,
-   canonical command when several exist, `no_touch` paths, test layout mapping.
-   Prefill every answer from detection. Never ask about task-tracker access here.
-5. **Record evidence hashes** for the files detection relied on — staleness
-   triggers re-sync later.
-6. **Write the profile** with slots: `lint_changed`, `test_targeted`,
-   `post_change_hooks` (empty slot = recorded honestly, checks become UNVERIFIED).
+
+### 1. Analyze how to work with the repo
+From manifests and configs, propose the repo's lint / targeted-test / hook
+commands with the evidence file for each. **Verify by execution**: run each
+proposed command ONCE (scoped to a small target). A command that does not run
+never enters the profile.
+
+### 2. Skill binding — the core question
+For each pipeline capability that has built-in behavior — **plan, review,
+test, ci, knowledge** — check `candidates` for a repo-local equivalent
+(e.g. a repo review skill vs the pipeline's built-in reviewer). Present a
+table: capability | repo asset found | built-in equivalent. Then ask the
+developer to choose ONE binding mode:
+
+1. **Use all from repo** — wherever a repo asset exists, it wins; built-ins
+   only fill the gaps.
+2. **Replace all (use ai_factory_one)** — built-ins everywhere; repo assets
+   ignored.
+3. **Decide per skill** — go through the table one row at a time:
+   `use repo` / `use built-in` / `use both` (repo asset runs first, built-in
+   pass on top).
+
+Record every binding in the profile with a content hash (get it from
+`pipeline hash <path> --repo <slug>`) so edits to a bound asset trigger
+`PROFILE_STALE` on the next run — the developer is asked to re-confirm, not
+silently bypassed.
+
+### 3. Interview — repo facts only
+Base branch, branch/PR naming, canonical command when several exist,
+`no_touch` paths, test layout mapping. Prefill from detection (and from
+`existing_profile` when re-onboarding). Never ask about task-tracker access
+here.
+
+### 4. Write the profile
+`profile.yml` at `profile_path`, with: `commands` slots (empty slot =
+recorded honestly, checks become UNVERIFIED), `test_layout`, `conventions`,
+`no_touch`, `bindings` (mode + per-capability source/path/sha), and
+`evidence_hashes` for the files detection relied on (`pipeline hash` again).
+
+### 5. Confirm
+Show the developer the full profile and wait for explicit confirmation —
+wrong bindings get fixed once here instead of poisoning every later stage.
+Then re-run `pipeline status` to prove the profile loads (and registers the
+repo for any-folder use).
 
 ## Done when
-The developer has reviewed the full profile and confirmed it. Show them the file
-content and wait for explicit confirmation — wrong bindings fixed once here
-instead of poisoning every later stage. Then re-run `pipeline status`.
+The developer confirmed the profile and `pipeline status` answers
+NO_ACTIVE_RUN (or ACTIVE_RUN) instead of NO_PROFILE. Tell them: `/pipeline
+start <task>` begins work; `/pipeline onboard` any time to change these
+choices.

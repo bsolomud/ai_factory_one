@@ -99,3 +99,7 @@ substrate; run the live toy ticket after `install.sh`.
   37/37 tests still green; sandbox install verified end-to-end.
 - **Next (post-MVP):** live toy ticket through CONTEXT→PLAN in a real Claude Code session
   (plan P1.6), then onboarding auto-detection (P2).
+- 2026-07-17 — **/pipeline onboard**: CLI `onboard`+`hash` commands, mechanical asset scan
+  (repo skills/commands/agent docs/knowledge dirs), three-mode skill-binding interview
+  (all-from-repo / replace-all / per-skill incl. 'both'), content-hashed bindings →
+  PROFILE_STALE on edit, re-onboarding prefills from the existing profile. 42/42 tests.

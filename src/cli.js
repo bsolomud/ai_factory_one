@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
 import { loadProfile } from './profile.js'
 import { reconcile } from './reconcile.js'
@@ -23,6 +23,38 @@ export function main(argv) {
 }
 
 const commands = {
+
+  onboard(positional, flags) {
+    if (positional[0] && !flags.repo) flags.repo = positional[0]
+    let ctx
+    try {
+      ctx = resolveRepo(flags)
+    } catch (e) {
+      if (!(e instanceof NoRepoError)) throw e
+      return emit({ verdict: 'NO_REPO', known_repos: paths.knownRepos(), next_action: 'pass a repo path: pipeline onboard <path> (or --repo <slug>)' }, 1)
+    }
+    paths.recordRepoLocation(ctx.slug, ctx.repoDir) // registered even before a profile exists
+    return emit({
+      verdict: 'ONBOARD',
+      repo: ctx.slug,
+      repo_path: ctx.repoDir,
+      profile_path: paths.profilePath(ctx.slug),
+      reonboarding: !!ctx.profile,
+      existing_profile: ctx.profile,
+      candidates: scanAssets(ctx.repoDir),
+      runbook: paths.asset('stages', 'onboard.md'),
+      next_action: ctx.profile
+        ? 'RE-onboarding: follow the runbook; prefill every question from existing_profile and never silently drop a previous answer — present current values and ask what to change'
+        : 'follow the runbook: interview the developer, verify every command by running it, write the profile'
+    })
+  },
+
+  hash(positional, flags) {
+    const ctx = resolveRepo(flags)
+    const hashes = {}
+    for (const rel of positional) hashes[rel] = hashPath(path.join(ctx.repoDir, rel))
+    return emit({ verdict: 'OK', hashes })
+  },
 
   repos() {
     const repos = paths.knownRepos().map(r => ({
@@ -295,15 +327,19 @@ function onlyActiveRun(slug) {
   return active.length === 1 ? active[0].id : null
 }
 
+// Staleness triggers: the evidence files the profile was derived from, AND
+// every repo-bound skill/doc (a team editing their review skill should be
+// noticed on the next run, not silently ignored).
 function staleEvidence(ctx) {
-  const hashes = ctx.profile?.evidence_hashes || {}
   const stale = []
-  for (const [file, recorded] of Object.entries(hashes)) {
-    const abs = path.join(ctx.repoDir, file)
-    const current = fs.existsSync(abs)
-      ? 'sha256:' + createHash('sha256').update(fs.readFileSync(abs)).digest('hex')
-      : 'missing'
-    if (current !== recorded) stale.push(file)
+  for (const [file, recorded] of Object.entries(ctx.profile?.evidence_hashes || {})) {
+    if ((hashPath(path.join(ctx.repoDir, file)) ?? 'missing') !== recorded) stale.push(file)
+  }
+  for (const [capability, binding] of Object.entries(ctx.profile?.bindings || {})) {
+    if (binding?.source !== 'repo' || !binding.path || !binding.sha) continue
+    if ((hashPath(path.join(ctx.repoDir, binding.path)) ?? 'missing') !== binding.sha) {
+      stale.push(`binding:${capability} (${binding.path})`)
+    }
   }
   return stale
 }

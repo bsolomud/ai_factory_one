@@ -12,19 +12,19 @@ starting over.
 3. The repo's pattern/convention docs via the profile's bindings.
 
 ## Procedure
-- Before writing code: search for existing helpers/methods that already do the
-  job — never reinvent what the codebase provides.
-- Implement ONLY the current subtask, matching surrounding code style.
-- Stay inside the plan's `## Affected files` (plus their tests). The write
-  boundary is enforced; needing a file outside it means: pause, append a plan
-  amendment, get it approved at this gate first.
-- A deviation beyond mechanical detail → record under `## Deviations` and
-  propose an amendment; do not silently diverge.
-- Run the profile's `lint_changed` and `test_targeted` commands yourself as
-  you go — plus anything else you judge relevant to this change (the profile
-  is a floor, not a ceiling). The developer must never see red.
-- Commit the subtask as ONE commit (recovery depends on one-commit-per-subtask).
+- **Spawn `pipeline-implementer`** with: the plan path, the current subtask
+  number + title, the progress artifact path, and the profile's lint/test
+  commands. It implements ONLY that subtask inside the plan's write boundary,
+  runs the checks green, and commits it as ONE commit (recovery depends on
+  one-commit-per-subtask).
+- If it returns a **proposed plan amendment** (needed a file outside the
+  boundary, or a deviation beyond mechanical detail): do NOT proceed — append
+  the amendment to the plan's `## Amendments`, record it under
+  `## Deviations` in `03-progress.md`, and surface it at this gate for the
+  developer to approve.
 - Update `03-progress.md`: check the subtask off, note what was done + commit.
+- The profile is a floor, not a ceiling: also run anything else you judge
+  relevant to this change. The developer must never see red.
 
 ## Done when
 The subtask is committed and `03-progress.md` updated; run `pipeline advance`

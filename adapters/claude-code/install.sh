@@ -33,11 +33,12 @@ else
 fi
 chmod +x "$PIPELINE_HOME/bin/pipeline" "$PIPELINE_HOME/bin/guard"
 
-# 3. Claude Code adapter: skill + agents (symlinks, so package updates flow).
+# 3. Claude Code adapter: skill + ALL agents (symlinks, so package updates flow).
 mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agents"
 ln -sfn "$PACKAGE_ROOT/adapters/claude-code/skills/pipeline" "$CLAUDE_DIR/skills/pipeline"
-ln -sf "$PACKAGE_ROOT/adapters/claude-code/agents/pipeline-critic.md" "$CLAUDE_DIR/agents/pipeline-critic.md"
-ln -sf "$PACKAGE_ROOT/adapters/claude-code/agents/pipeline-reviewer.md" "$CLAUDE_DIR/agents/pipeline-reviewer.md"
+for agent in "$PACKAGE_ROOT"/adapters/claude-code/agents/*.md; do
+  ln -sf "$agent" "$CLAUDE_DIR/agents/$(basename "$agent")"
+done
 
 # 4. Guard hooks: MERGE into settings.json — never overwrite, never duplicate.
 SETTINGS="$CLAUDE_DIR/settings.json" PIPELINE_HOME="$PIPELINE_HOME" node <<'EOF'

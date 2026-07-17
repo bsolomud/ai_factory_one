@@ -92,5 +92,10 @@ substrate; run the live toy ticket after `install.sh`.
   (listRuns filtered them out before reconcile could rebuild); guard path comparison broke
   on macOS `/var`→`/private/var` symlinks; `!(x)` glob negation anchored to string end
   instead of segment end; duplicated shebang in esbuild bundles.
+- 2026-07-17 — **UX layer**: single-command install (`./install.sh --claude`), `/pipeline`
+  subcommands (`start <ticket|link|text>` / `work` / `status` / `approve`), interactive
+  CONTEXT stage with a required **Acceptance criteria** section, and the six-agent roster
+  (planner, architect, critic, implementer, qa, reviewer) wired into the stage runbooks.
+  37/37 tests still green; sandbox install verified end-to-end.
 - **Next (post-MVP):** live toy ticket through CONTEXT→PLAN in a real Claude Code session
   (plan P1.6), then onboarding auto-detection (P2).

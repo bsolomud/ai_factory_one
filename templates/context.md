@@ -7,8 +7,12 @@ status: draft
 # Context — __RUN__
 
 ## Requirements
-<!-- What the ticket asks for: requirements and acceptance criteria, in your own
-words. Cite the ticket source (fetched / pasted). -->
+<!-- What the task asks for, in your own words. Cite the source (ticket /
+pasted text — see 00-ticket.md). Note what the task does NOT say. -->
+
+## Acceptance criteria
+<!-- Numbered, each independently checkable. Built from the developer's
+answers to your questions — agreed at the CONTEXT gate, verified by QA. -->
 
 ## Findings
 <!-- What you learned from the knowledge layer and the code it routes to.

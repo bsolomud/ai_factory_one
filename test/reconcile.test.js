@@ -29,7 +29,7 @@ test('missing state.json: rebuilt at first stage when no artifacts exist', () =>
 test('rebuild: complete-but-unapproved artifact → awaiting_gate at that stage', () => {
   const { root } = sandbox()
   const runDir = scaffoldRun(root)
-  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
   const { state } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
   assert.equal(state.stage, 'CONTEXT')
   assert.equal(state.stage_status, 'awaiting_gate')
@@ -38,7 +38,7 @@ test('rebuild: complete-but-unapproved artifact → awaiting_gate at that stage'
 test('rebuild: approved gate in events → next stage in_progress, gates restored', () => {
   const { root } = sandbox()
   const runDir = scaffoldRun(root)
-  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
   appendEvent(runDir, { event: 'gate_approved', stage: 'CONTEXT', by: 'human' })
   const { state } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
   assert.equal(state.stage, 'PLAN')
@@ -70,7 +70,7 @@ test('crash between artifact completion and advance → "ready to advance" note'
   const runDir = scaffoldRun(root)
   const state = newState({ runId: 'T-1', repo: 'r', stage: 'CONTEXT' })
   writeState(runDir, state)
-  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
   const { notes, rebuilt } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
   assert.equal(rebuilt, false)
   assert.match(notes.join(' '), /stamped complete.*pipeline advance/)

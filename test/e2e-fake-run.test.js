@@ -31,12 +31,12 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   assert.match(blocked.reasons.join(' '), /status 'draft'/)
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', Findings: 'src/app.sh prints it.', 'Open questions': '' })
+    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Findings: 'src/app.sh prints it.', 'Open questions': '' })
   blocked = advance()
   assert.match(blocked.reasons.join(' '), /'## Open questions'.*empty/, 'empty section blocks with section name')
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', Findings: 'src/app.sh prints it.', 'Open questions': 'None.' })
+    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Findings: 'src/app.sh prints it.', 'Open questions': 'None.' })
   let gate = advance()
   assert.equal(gate.verdict, 'GATE', 'auto_approvable gate still gates under default gated autonomy')
   assert.match(advance().reasons.join(' '), /awaiting gate approval/, 'cannot advance past an unapproved gate')
@@ -173,7 +173,7 @@ no_touch: []
   const runDir = path.join(home, 'repos', 'example.com-test-other-repo', 'runs', 'X-7')
 
   assert.equal(run(['new-run', 'X-7']).verdict, 'CREATED')
-  completeArtifact(runDir, 'artifacts/01-context.md', 'X-7', 'CONTEXT', { Requirements: 'r', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'X-7', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
   assert.equal(run(['advance']).verdict, 'GATE')
   assert.equal(run(['approve']).stage, 'PLAN')
   completeArtifact(runDir, 'artifacts/02-plan.md', 'X-7', 'PLAN', {
@@ -206,7 +206,7 @@ test('autonomy=auto_low_risk auto-approves auto_approvable gates only', { timeou
   const runDir = path.join(home, 'repos', 'example.com-test-auto-repo', 'runs', 'A-1')
 
   assert.equal(run(['new-run', 'A-1', '--autonomy', 'auto_low_risk']).verdict, 'CREATED')
-  completeArtifact(runDir, 'artifacts/01-context.md', 'A-1', 'CONTEXT', { Requirements: 'r', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'A-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
   const advanced = run(['advance'])
   assert.equal(advanced.verdict, 'ADVANCED', 'CONTEXT (auto_approvable) self-approved')
   assert.equal(advanced.stage, 'PLAN')

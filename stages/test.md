@@ -13,15 +13,12 @@ gets a test or an explicit, written reason it doesn't.
 `artifacts/04-test-report.md`. Required sections: Coverage audit,
 Risk-to-test map, Added tests, Deferred.
 
-## Procedure
-- **Spawn `pipeline-qa`** with: the branch diff scope (base branch name), the
-  plan path (Risks + Testing strategy), the context path (Acceptance
-  criteria), and the profile's test conventions. It audits coverage, builds
-  the risk-to-test map (every plan risk AND every acceptance criterion → a
-  named test or `not tested because <reason>`), writes the justified missing
-  tests in the repo's own style, screens them for flakiness, and returns only
-  green work.
-- Write its results into `04-test-report.md`; deferred edge cases go under
+## Procedure (executed by `pipeline-qa`, fresh context)
+- Audit coverage against the branch diff; build the risk-to-test map (every
+  plan risk AND every acceptance criterion → a named test or `not tested
+  because <reason>`); write the justified missing tests in the repo's own
+  style; screen them for flakiness; only green work is presented.
+- Write the results into `04-test-report.md`; deferred edge cases go under
   `## Deferred` — the developer sees them at the gate; recorded, not dropped.
 
 ## Done when

@@ -1,8 +1,13 @@
 # Stage: PLAN
 
-Produce an implementation plan good enough that IMPLEMENT is mechanical. Three
-specialists collaborate; you orchestrate and own the artifact. The plan's
-`## Affected files` becomes the enforced write boundary — be complete.
+Produce an implementation plan good enough that IMPLEMENT is mechanical. The
+plan's `## Affected files` becomes the enforced write boundary — be complete.
+
+**Execution model**: the dispatcher orchestrates three fresh-context
+specialists — **pipeline-planner** owns and writes the artifact
+(draft → revise → finalize modes), **pipeline-architect** vets the design,
+**pipeline-critic** attacks it adversarially. Each agent reads this runbook
+and the artifacts from disk; only findings summaries travel between them.
 
 ## Inputs
 1. `artifacts/01-context.md` (approved — requirements, acceptance criteria,
@@ -14,23 +19,23 @@ specialists collaborate; you orchestrate and own the artifact. The plan's
 `artifacts/02-plan.md`. Required sections: Approach, Affected files, Risks,
 Subtasks, Testing strategy, Open questions.
 
-## Procedure
-1. **Draft — spawn `pipeline-planner`** with: the context artifact path, the
-   repo root, the knowledge routing. It returns the full plan draft. Write it
-   into `02-plan.md` (status stays `draft`).
-2. **Design check — spawn `pipeline-architect`** on the draft: pattern fit,
-   boundaries, blast radius, simpler-design check. SOUND → continue;
-   RECONSIDER → revise the draft (or record the disagreement under
-   `## Open questions` for the developer).
-3. **Adversarial check — spawn `pipeline-critic`** (fresh context) with
-   `stages/plan-critic.md`, the plan, and the context artifact:
-   - Record the round: `pipeline set-substate critic_round=<n>`.
-   - **Blocking findings** → revise, re-run the critic. Hard cap 2 rounds;
-     still blocking → attach both positions to `## Open questions`, escalate.
-   - **Advisory findings** → fold into `## Risks` / `## Open questions`.
-   - Store the critique as `artifacts/02-plan-critique.md`.
-4. Verify traceability yourself: every acceptance criterion → a subtask +
-   a testing-strategy entry; every non-`(new)` affected file exists.
+## Procedure (choreography — the dispatcher drives the sequence)
+1. **Draft** (`pipeline-planner`, mode draft): write the full plan into
+   `02-plan.md` (status stays `draft`), grounded in read code, routed
+   knowledge, and merged-change history.
+2. **Design check** (`pipeline-architect`): pattern fit, boundaries, blast
+   radius, simpler-design check. SOUND → continue; RECONSIDER → planner
+   revises (or the disagreement goes under `## Open questions`).
+3. **Adversarial check** (`pipeline-critic`, per `stages/plan-critic.md`):
+   - The dispatcher records each round: `pipeline set-substate critic_round=<n>`.
+   - **Blocking findings** → planner revises (mode revise), fresh critic
+     re-checks. Hard cap 2 rounds; still blocking → both positions attached
+     to `## Open questions`, escalated to the developer.
+   - **Advisory findings** → folded into `## Risks` / `## Open questions`.
+   - The critique is stored as `artifacts/02-plan-critique.md`.
+4. **Finalize** (`pipeline-planner`, mode finalize): verify traceability —
+   every acceptance criterion → a subtask + a testing-strategy entry; every
+   non-`(new)` affected file exists.
 
 ## Done when
 Critic clean (or escalated), sections complete, `status: complete` set LAST;

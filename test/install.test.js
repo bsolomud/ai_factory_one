@@ -30,7 +30,7 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
     assert.ok(fs.existsSync(path.join(home, rel)), `missing ${rel} in pipeline home`)
   }
   assert.ok(fs.existsSync(path.join(claude, 'skills/pipeline/SKILL.md')), 'skill linked')
-  for (const agent of ['planner', 'architect', 'critic', 'implementer', 'qa', 'reviewer']) {
+  for (const agent of ['onboarder', 'context', 'planner', 'architect', 'critic', 'implementer', 'qa', 'reviewer', 'stage-runner']) {
     assert.ok(fs.existsSync(path.join(claude, `agents/pipeline-${agent}.md`)), `${agent} agent linked`)
   }
   const skill = fs.readFileSync(path.join(claude, 'skills/pipeline/SKILL.md'), 'utf8')

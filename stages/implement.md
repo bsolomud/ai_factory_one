@@ -11,12 +11,10 @@ starting over.
 2. `artifacts/03-progress.md` — what's done so far.
 3. The repo's pattern/convention docs via the profile's bindings.
 
-## Procedure
-- **Spawn `pipeline-implementer`** with: the plan path, the current subtask
-  number + title, the progress artifact path, and the profile's lint/test
-  commands. It implements ONLY that subtask inside the plan's write boundary,
-  runs the checks green, and commits it as ONE commit (recovery depends on
-  one-commit-per-subtask).
+## Procedure (executed by `pipeline-implementer`, fresh context per subtask)
+- Implement ONLY the current subtask inside the plan's write boundary, run
+  the profile's checks green, and commit it as ONE commit (recovery depends
+  on one-commit-per-subtask).
 - If it returns a **proposed plan amendment** (needed a file outside the
   boundary, or a deviation beyond mechanical detail): do NOT proceed — append
   the amendment to the plan's `## Amendments`, record it under

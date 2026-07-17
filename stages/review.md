@@ -13,15 +13,15 @@ Catch issues while fixing them is private and cheap — before a PR exists.
 `artifacts/05-review.md`. Required sections: Findings, Fixes applied,
 Disputed, Plan-vs-shipped check.
 
-## Procedure
-- Spawn the **pipeline-reviewer** subagent (fresh context) on the full diff,
-  with the bound skill's instructions or the built-in passes:
-  logic/correctness, security, performance, style-consistency-with-surrounding-
-  code. Verification-before-flagging: a finding without checked evidence is
-  noise — drop it.
-- **Confirmed findings** → fix them (this is the fix loop; stay inside the
-  plan boundary; amend the plan if a fix requires it), commit, and record
-  under `## Fixes applied`. Max 2 reviewer rounds, then escalate leftovers.
+## Procedure (executed by `pipeline-reviewer`, fresh context; fixes by `pipeline-implementer`)
+- Review the full diff with the bound skill's instructions or the built-in
+  passes: logic/correctness, security, performance,
+  style-consistency-with-surrounding-code. Verification-before-flagging: a
+  finding without checked evidence is noise — drop it.
+- **Confirmed findings** → the dispatcher hands them to the implementer (fix
+  mode: stay inside the plan boundary; amend the plan if a fix requires it,
+  commit), then a fresh reviewer verifies and records them under
+  `## Fixes applied`. Max 2 reviewer rounds, then escalate leftovers.
 - **Disputed findings** → record both sides under `## Disputed`; the developer
   arbitrates at the gate.
 - **Plan-vs-shipped check**: does the final shape still match the approved

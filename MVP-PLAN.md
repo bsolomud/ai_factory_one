@@ -103,3 +103,8 @@ substrate; run the live toy ticket after `install.sh`.
   (repo skills/commands/agent docs/knowledge dirs), three-mode skill-binding interview
   (all-from-repo / replace-all / per-skill incl. 'both'), content-hashed bindings →
   PROFILE_STALE on edit, re-onboarding prefills from the existing profile. 42/42 tests.
+- 2026-07-17 — **Context isolation**: main session is a thin dispatcher; every stage (and
+  onboarding) runs in its own fresh-context agent via a self-contained handoff block;
+  interactive steps are two-phase (agent returns questions → developer answers → fresh
+  agent writes). New agents: onboarder, context, stage-runner; planner/reviewer now write
+  their artifacts directly. 42/42 tests.

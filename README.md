@@ -36,8 +36,18 @@ append-only `events.jsonl` + numbered artifacts.
 ```
 
 That's it — it installs dependencies, builds the self-contained CLI, registers
-the `/pipeline` skill, the six specialist agents (**planner, architect,
-critic, implementer, qa, reviewer**), and the gate-guard hooks.
+the `/pipeline` skill, the nine specialist agents (**onboarder, context,
+planner, architect, critic, implementer, qa, reviewer, stage-runner**), and
+the gate-guard hooks.
+
+**Context isolation by design**: your main session is only a dispatcher —
+your conversation never leaks into the agents, and their work never floods
+your context. Every stage runs in its own fresh agent that receives a small
+self-contained handoff (repo, run id, artifact paths, your answers verbatim
+where needed) and reads everything else from disk, returning a ≤30-line
+summary. Interactive steps (onboarding, context questions) run in two phases:
+the agent returns its questions, you answer in chat, a fresh agent gets your
+answers and writes the result.
 
 ## Use — everything is `/pipeline ...`, typed in a Claude Code session
 

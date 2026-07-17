@@ -38,9 +38,10 @@ export function guard(mode, input) {
 }
 
 function guardBash(command, { state }) {
-  if (/\bpipeline(\.js)?\s+approve\b/.test(command)) {
-    return deny(`'pipeline approve' is human-only: gate approval must come from the developer, not the model. Ask them to run it themselves — in Claude Code they can type: ! pipeline approve`)
-  }
+  // Note: `pipeline approve` is NOT hook-blocked. The gate contract lives in
+  // the skill: the model may only run it after presenting the gate summary
+  // and receiving the developer's explicit confirmation in chat; every
+  // approval is recorded in gates[] + events.jsonl for audit.
   if (/\bgit\s+push\b/.test(command)) {
     const prApproved = state.gates.some(g => g.stage === 'PR' && g.approved) || ['CI', 'SCRIBE', 'DONE'].includes(state.stage)
     if (!prApproved) {

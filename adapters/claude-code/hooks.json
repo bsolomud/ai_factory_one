@@ -3,11 +3,11 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "~/.ai-pipeline/bin/guard bash" }]
+        "hooks": [{ "type": "command", "command": "~/.ai_factory_one/bin/guard bash" }]
       },
       {
         "matcher": "Edit|Write|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "~/.ai-pipeline/bin/guard write" }]
+        "hooks": [{ "type": "command", "command": "~/.ai_factory_one/bin/guard write" }]
       }
     ]
   }

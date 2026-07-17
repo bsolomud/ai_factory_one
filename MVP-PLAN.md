@@ -23,8 +23,8 @@ No orchestrator. A per-run `state.json` (written ONLY by the CLI) points at the 
 stage; the `/pipeline` skill loads that stage's runbook from `stages/`; the runbook tells
 the model what to do and ends with `pipeline advance`, which re-runs the stage's
 validators and refuses to move the FSM unless they pass (*model proposes, code disposes*).
-All state lives in the pipeline home (`~/.ai-pipeline/`, overridable via
-`$AI_PIPELINE_HOME`), never in the target repo.
+All state lives in the pipeline home (`~/.ai_factory_one/`, overridable via
+`$AI_FACTORY_HOME`), never in the target repo.
 
 ## Phases & tasks
 
@@ -44,7 +44,7 @@ All state lives in the pipeline home (`~/.ai-pipeline/`, overridable via
 - [x] B1 `src/guard.js` + `bin/guard` — PreToolUse hook: deny `git push` before PR-gate approval, deny `pipeline approve` from the model, deny `git commit` outside IMPLEMENT/TEST, deny writes to `no_touch`/state files/repo-outside-write-stages; **fail open when no active run**
 - [x] B2 `stages/*.md` — all 11 runbooks (capability references only, idempotent re-entry)
 - [x] B3 `adapters/claude-code/` — `SKILL.md` (per plan §4), `pipeline-critic.md` + `pipeline-reviewer.md` agents, `hooks.json`
-- [x] B4 `install.sh` — copy core to home, symlink skill+agents, **merge** hooks into `settings.json`; honors `$AI_PIPELINE_HOME`/`$CLAUDE_HOME` so it is testable in a sandbox
+- [x] B4 `install.sh` — copy core to home, symlink skill+agents, **merge** hooks into `settings.json`; honors `$AI_FACTORY_HOME`/`$CLAUDE_HOME` so it is testable in a sandbox
 - [x] B5 `npm run build` — esbuild bundles `dist/pipeline` + `dist/guard` (single files, no node_modules at runtime)
 
 ### Phase C — Verification harness

@@ -5,10 +5,10 @@ import { guard, main } from '../src/guard.js'
 import { newState, writeState } from '../src/state.js'
 import { installProfile, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
 
-// guard() is pure over (mode, hook-input, disk); AI_PIPELINE_HOME points it at the sandbox.
+// guard() is pure over (mode, hook-input, disk); AI_FACTORY_HOME points it at the sandbox.
 function setup({ stage = 'PLAN', gates = [] } = {}) {
   const { root, home } = sandbox()
-  process.env.AI_PIPELINE_HOME = home
+  process.env.AI_FACTORY_HOME = home
   const repo = standardRepo(root, 'g-repo')
   const slug = 'example.com-test-g-repo'
   installProfile(home, slug, STANDARD_PROFILE)
@@ -24,7 +24,7 @@ const write = (repo, file_path) => guard('write', { cwd: repo.dir, tool_input: {
 
 test('fail open: not a git repo / no profile / no active run / broken stdin', () => {
   const { root, home } = sandbox()
-  process.env.AI_PIPELINE_HOME = home
+  process.env.AI_FACTORY_HOME = home
   assert.equal(guard('bash', { cwd: root, tool_input: { command: 'git push' } }).decision, 'allow', 'not a repo')
 
   const repo = standardRepo(root, 'plain-repo')
@@ -37,11 +37,10 @@ test('fail open: not a git repo / no profile / no active run / broken stdin', ()
   assert.equal(result.exitCode, 0, 'unparseable hook input → fail open')
 })
 
-test('pipeline approve is human-only, in any stage', () => {
+test('pipeline approve is allowed (chat-confirmed contract lives in the skill, audited in events)', () => {
   const { repo } = setup({ stage: 'IMPLEMENT' })
-  const result = bash(repo, 'cd x && ~/.ai-pipeline/bin/pipeline approve --note ok')
-  assert.equal(result.decision, 'deny')
-  assert.match(result.message, /human-only/)
+  const result = bash(repo, 'cd x && ~/.ai_factory_one/bin/pipeline approve --note "confirmed in chat"')
+  assert.equal(result.decision, 'allow')
 })
 
 test('git push denied before PR gate, allowed after', () => {

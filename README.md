@@ -70,6 +70,7 @@ PR → CI loop → retro.
 ```
 /pipeline approve                   # shows you exactly what's under review,
                                     # waits for your explicit yes, records it
+/pipeline onboard <path>            # analyze a repo + bind its skills (below)
 /pipeline status                    # where am I, what's next
 /pipeline repos                     # repos the pipeline knows, active runs
 ```
@@ -84,9 +85,23 @@ The model is hook-denied: `git push` before the PR gate is approved, writes to
 `no_touch` paths, and edits to state files (fail-open when no pipeline run is
 active — normal Claude usage is untouched).
 
-Repo profiles are hand-written for now (see `stages/onboard.md` — the
-onboarding interview runs on first `/pipeline start`; command auto-detection
-is post-MVP).
+## Onboarding — `/pipeline onboard <path to repo>`
+
+One interview makes any repo pipeline-ready (it also runs automatically on the
+first `/pipeline start` in an unknown repo). The pipeline analyzes how to work
+with the repo (lint/test/hook commands — each verified by actually running
+it), scans for **repo-local AI assets** (`.ai/skills/`, `.claude/skills/`,
+`.claude/commands/`, `CLAUDE.md`/`AGENTS.md`, `doc/ai/`), and asks you the
+binding question per capability (plan, review, test, ci, knowledge):
+
+1. **Use all from repo** — repo skills win wherever they exist
+2. **Replace all** — ai_factory_one built-ins everywhere
+3. **Decide per skill** — repo / built-in / both, row by row
+
+Bindings are content-hashed: if someone edits a bound repo skill, the next
+run reports the profile as stale and asks you to re-confirm. **Re-run
+`/pipeline onboard` any time** to change any choice — it prefills from your
+current profile and never silently drops an earlier answer.
 
 ## Per-repo profile (`~/.ai_factory_one/repos/<slug>/profile.yml`)
 

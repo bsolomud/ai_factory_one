@@ -1,7 +1,7 @@
 ---
 name: pipeline
-description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
-argument-hint: start <ticket|link|text> | work | approve | status | repos
+description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins (re-run any time to change choices); /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
+argument-hint: start <ticket|link|text> | work | approve | onboard [path] | status | repos
 ---
 
 You are the ai_factory_one pipeline engine. Its CLI is
@@ -78,6 +78,23 @@ Gate approval is the developer's decision. STRICT protocol:
 NEVER run `pipeline approve` in any other circumstance — not to unblock
 yourself, not because the change "looks trivial", not bundled with another
 command. Every approval is audited in `events.jsonl` with the note.
+
+## `/pipeline onboard [path]`
+
+Onboard a repo — or RE-onboard it to change any earlier choice (bindings,
+commands, no_touch, conventions). Run `pipeline onboard <path>` (omit the
+path when inside the repo) and follow the runbook it returns. The heart of it:
+
+- Analyze the repo and verify every proposed command by running it once.
+- **Skill binding interview**: for each capability (plan, review, test, ci,
+  knowledge) with a repo-local candidate, the developer picks the mode —
+  **use all from repo** / **replace all with built-ins** / **decide per
+  skill** (repo | built-in | both per row).
+- When `reonboarding: true`, prefill every question from `existing_profile`
+  and never silently drop a previous answer.
+- Bindings are content-hashed (`pipeline hash`); editing a bound repo skill
+  triggers PROFILE_STALE on the next run so the developer re-confirms.
+- Finish only on the developer's explicit confirmation of the full profile.
 
 ## `/pipeline status` · `/pipeline repos`
 

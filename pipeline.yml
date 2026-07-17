@@ -1,0 +1,102 @@
+# The FSM in data. Repo-agnostic by construction: capability SLOTS only —
+# concrete commands live in each repo's profile.yml (enforced by the
+# agnostic-lint test). Adding a stage or tightening a gate is a YAML edit;
+# the engine skill and CLI never change.
+
+stages:
+  CONTEXT:
+    prompt: stages/context.md
+    output: artifacts/01-context.md
+    validate:
+      - artifact_complete: artifacts/01-context.md
+      - sections: [Requirements, Findings, Open questions]
+    gate: { required: true, auto_approvable: true }
+    next: PLAN
+
+  PLAN:
+    prompt: stages/plan.md
+    inputs: [artifacts/01-context.md]
+    output: artifacts/02-plan.md
+    critic: { agent: pipeline-critic, prompt: stages/plan-critic.md, max_rounds: 2 }
+    validate:
+      - artifact_complete: artifacts/02-plan.md
+      - sections: [Approach, Affected files, Risks, Subtasks, Testing strategy, Open questions]
+      - files_exist_in_repo: Affected files
+    gate: { required: true, auto_approvable: false }
+    next: BREAKDOWN
+
+  BREAKDOWN:
+    prompt: stages/breakdown.md
+    inputs: [artifacts/02-plan.md]
+    output: artifacts/03-progress.md
+    validate:
+      - artifact_complete: artifacts/03-progress.md
+      - sections: [Subtasks, Deviations]
+      - substate_set: [subtask, of]
+    gate: { required: true, auto_approvable: true }
+    next: IMPLEMENT
+
+  IMPLEMENT:
+    prompt: stages/implement.md
+    per_subtask: true
+    validate:
+      - profile_command: lint_changed
+      - profile_command: test_targeted
+      - profile_command: post_change_hooks
+      - git_clean_within: plan.affected_paths
+      - min_commits_per_subtask: 1
+    gate: { required: true, auto_approvable: false }
+    next: TEST
+
+  TEST:
+    prompt: stages/test.md
+    inputs: [artifacts/02-plan.md, artifacts/03-progress.md]
+    output: artifacts/04-test-report.md
+    validate:
+      - artifact_complete: artifacts/04-test-report.md
+      - sections: [Coverage audit, Risk-to-test map, Added tests, Deferred]
+      - profile_command: lint_changed
+      - profile_command: test_targeted
+    gate: { required: true, auto_approvable: false }
+    next: REVIEW
+
+  REVIEW:
+    prompt: stages/review.md
+    inputs: [artifacts/02-plan.md]
+    output: artifacts/05-review.md
+    critic: { agent: pipeline-reviewer, max_rounds: 2 }
+    validate:
+      - artifact_complete: artifacts/05-review.md
+      - sections: [Findings, Fixes applied, Disputed, Plan-vs-shipped check]
+      - profile_command: lint_changed
+      - profile_command: test_targeted
+    gate: { required: true, auto_approvable: false }
+    next: PR
+
+  PR:
+    prompt: stages/pr.md
+    inputs: [artifacts/02-plan.md, artifacts/03-progress.md, artifacts/04-test-report.md, artifacts/05-review.md]
+    output: artifacts/06-pr-draft.md
+    validate:
+      - artifact_complete: artifacts/06-pr-draft.md
+      - sections: [Title, Description, Testing notes, Ops notes, Reviewer guidance]
+    gate: { required: true, auto_approvable: false }   # THIS approval unlocks push in the guard
+    next: CI
+
+  CI:
+    prompt: stages/ci.md
+    output: artifacts/07-ci-analysis.md
+    validate:
+      - artifact_complete: artifacts/07-ci-analysis.md
+      - sections: [Runs analyzed, Classification, Fixes, Outcome]
+    gate: { required: true, auto_approvable: false }
+    next: SCRIBE
+
+  SCRIBE:
+    prompt: stages/scribe.md
+    output: artifacts/08-retro.md
+    validate:
+      - artifact_complete: artifacts/08-retro.md
+      - sections: [Plan-vs-shipped, Learnings, Routing]
+    gate: { required: true, auto_approvable: true }
+    next: DONE

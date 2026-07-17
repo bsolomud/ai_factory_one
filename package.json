@@ -1,0 +1,21 @@
+{
+  "name": "ai_factory_one",
+  "version": "0.1.0",
+  "description": "Repo-agnostic AI development pipeline — model proposes, code disposes",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {
+    "pipeline": "bin/pipeline",
+    "pipeline-guard": "bin/guard"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build.js"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

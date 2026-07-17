@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import fs, { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Pipeline home: ALL state lives here, never inside a target repo.
-// $AI_PIPELINE_HOME override exists so tests (and CI) run against a sandbox.
+// $AI_FACTORY_HOME override exists so tests (and CI) run against a sandbox.
 export function home() {
-  return process.env.AI_PIPELINE_HOME || path.join(os.homedir(), '.ai-pipeline')
+  return process.env.AI_FACTORY_HOME || path.join(os.homedir(), '.ai_factory_one')
 }
 
 export function packageRoot() {
@@ -55,4 +55,29 @@ export function profilePath(slug) {
 
 export function runDir(slug, runId) {
   return path.join(repoHome(slug), 'runs', runId)
+}
+
+// Registry of where each known repo lives locally, so /pipeline works from any
+// folder: recorded on every successful profile resolution, read by `repos`.
+export function recordRepoLocation(slug, repoDir) {
+  try {
+    fs.mkdirSync(repoHome(slug), { recursive: true })
+    fs.writeFileSync(path.join(repoHome(slug), 'location'), repoDir + '\n')
+  } catch { /* registry is best-effort */ }
+}
+
+export function knownRepos() {
+  const reposDir = path.join(home(), 'repos')
+  if (!existsSync(reposDir)) return []
+  return fs.readdirSync(reposDir)
+    .filter(slug => fs.statSync(path.join(reposDir, slug)).isDirectory())
+    .map(slug => {
+      const locFile = path.join(reposDir, slug, 'location')
+      const location = existsSync(locFile) ? fs.readFileSync(locFile, 'utf8').trim() : null
+      return {
+        slug,
+        path: location && existsSync(location) ? location : null,
+        has_profile: existsSync(path.join(reposDir, slug, 'profile.yml'))
+      }
+    })
 }

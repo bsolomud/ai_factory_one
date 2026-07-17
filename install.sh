@@ -24,7 +24,7 @@ case "${1:-}" in
     echo
     echo "Installs for Claude Code: the /pipeline skill, the specialist agents"
     echo "(planner, architect, critic, implementer, qa, reviewer), the gate"
-    echo "guard hooks, and the pipeline CLI in ~/.ai-pipeline/."
+    echo "guard hooks, and the pipeline CLI in ~/.ai_factory_one/."
     echo
     echo "Then, in any repo:  /pipeline start <ticket | link | task text>"
     exit 1

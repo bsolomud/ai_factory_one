@@ -25,7 +25,7 @@ dist/             self-contained bundles (no node_modules at runtime)
 test/             the verification suite (VC1–VC8 in MVP-PLAN.md)
 ```
 
-All state lives in `~/.ai-pipeline/` (override: `$AI_PIPELINE_HOME`) — **never
+All state lives in `~/.ai_factory_one/` (override: `$AI_FACTORY_HOME`) — **never
 inside a target repo**: profiles per repo slug, runs with `state.json` +
 append-only `events.jsonl` + numbered artifacts.
 
@@ -39,16 +39,21 @@ That's it — it installs dependencies, builds the self-contained CLI, registers
 the `/pipeline` skill, the six specialist agents (**planner, architect,
 critic, implementer, qa, reviewer**), and the gate-guard hooks.
 
-## Use
+## Use — everything is `/pipeline ...`, typed in a Claude Code session
 
 ```
 /pipeline start MB-12345            # or a link, or plain text:
 /pipeline start fix the login redirect looping on expired sessions
 ```
 
+Works **from any folder**: if you're not inside a repo, it lists the repos it
+knows and asks which one(s) the task concerns. A feature spanning several
+repos (e.g. backend + SDK) gets a linked run — and a plan — **in each repo**,
+with context questions asked once and work ordered by dependency.
+
 The pipeline reviews the task, reads the repo's knowledge, **asks you the
 questions it needs answered in chat**, and writes up requirements + agreed
-**acceptance criteria**. You review; approve with `! pipeline approve`.
+**acceptance criteria**. You review and say "approve" (or request changes).
 
 ```
 /pipeline work
@@ -63,23 +68,27 @@ acceptance criterion to a test → **reviewer** does the pre-PR review → draft
 PR → CI loop → retro.
 
 ```
+/pipeline approve                   # shows you exactly what's under review,
+                                    # waits for your explicit yes, records it
 /pipeline status                    # where am I, what's next
-! pipeline approve                  # your act at every gate — the model is
-                                    # physically blocked from running it
+/pipeline repos                     # repos the pipeline knows, active runs
 ```
+
+Every approval requires your explicit confirmation in chat and is recorded —
+with your words — in the run's audit log (`events.jsonl`).
 
 Interruptions don't matter: kill the laptop mid-subtask and `/pipeline work`
 reconstructs everything from disk (`git > artifacts > state.json`).
 
-The model is hook-denied: `pipeline approve`, `git push` before the PR gate,
-writes to `no_touch` paths, and edits to state files (fail-open when no
-pipeline run is active — normal Claude usage is untouched).
+The model is hook-denied: `git push` before the PR gate is approved, writes to
+`no_touch` paths, and edits to state files (fail-open when no pipeline run is
+active — normal Claude usage is untouched).
 
 Repo profiles are hand-written for now (see `stages/onboard.md` — the
 onboarding interview runs on first `/pipeline start`; command auto-detection
 is post-MVP).
 
-## Per-repo profile (`~/.ai-pipeline/repos/<slug>/profile.yml`)
+## Per-repo profile (`~/.ai_factory_one/repos/<slug>/profile.yml`)
 
 ```yaml
 commands:                 # capability slots — every value verified by running it

@@ -24,7 +24,7 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-hook' }] }] }
   }))
 
-  install({ AI_PIPELINE_HOME: home, CLAUDE_HOME: claude })
+  install({ AI_FACTORY_HOME: home, CLAUDE_HOME: claude })
 
   for (const rel of ['pipeline.yml', 'stages/context.md', 'templates/plan.md', 'bin/pipeline', 'bin/guard', 'VERSION']) {
     assert.ok(fs.existsSync(path.join(home, rel)), `missing ${rel} in pipeline home`)
@@ -46,7 +46,7 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
   assert.ok(commands.some(c => c.endsWith('guard write')), 'write guard merged')
 
   // Idempotent: re-running must not duplicate hooks.
-  install({ AI_PIPELINE_HOME: home, CLAUDE_HOME: claude })
+  install({ AI_FACTORY_HOME: home, CLAUDE_HOME: claude })
   const again = JSON.parse(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'))
   assert.equal(again.hooks.PreToolUse.length, settings.hooks.PreToolUse.length, 'no duplicates on re-run')
 
@@ -57,7 +57,7 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
   const out = execFileSync(path.join(home, 'bin/pipeline'), ['status'], {
     cwd: repoDir,
     encoding: 'utf8',
-    env: { ...process.env, AI_PIPELINE_HOME: home }
+    env: { ...process.env, AI_FACTORY_HOME: home }
   })
   assert.equal(JSON.parse(out).verdict, 'NO_PROFILE')
 })

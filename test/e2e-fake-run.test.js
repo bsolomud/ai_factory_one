@@ -217,3 +217,36 @@ test('autonomy=auto_low_risk auto-approves auto_approvable gates only', { timeou
   })
   assert.equal(run(['advance']).verdict, 'GATE', 'PLAN gate (auto_approvable: false) still requires a human')
 })
+
+// Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.
+test('works from any folder: NO_REPO → repos registry → --repo <slug>', { timeout: 60_000 }, () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'anywhere-repo')
+  installProfile(home, 'example.com-test-anywhere-repo', STANDARD_PROFILE)
+
+  // Register the repo by touching it once from inside.
+  assert.equal(cli(['status'], { home, cwd: repo.dir }).verdict, 'NO_ACTIVE_RUN')
+
+  // From a folder that is not a git repo at all:
+  const elsewhere = path.join(root, 'elsewhere')
+  fs.mkdirSync(elsewhere)
+  const lost = cli(['status'], { home, cwd: elsewhere })
+  assert.equal(lost.verdict, 'NO_REPO')
+  assert.equal(lost.known_repos.length, 1)
+  assert.equal(lost.known_repos[0].slug, 'example.com-test-anywhere-repo')
+  assert.ok(lost.known_repos[0].path, 'local path recorded in the registry')
+  assert.ok(lost.known_repos[0].has_profile, 'profile flag reported')
+
+  const repos = cli(['repos'], { home, cwd: elsewhere })
+  assert.equal(repos.verdict, 'OK')
+  assert.equal(repos.repos.length, 1)
+
+  // Drive a run entirely from elsewhere via --repo <slug>:
+  assert.equal(cli(['new-run', 'W-1', '--repo', 'example.com-test-anywhere-repo'], { home, cwd: elsewhere }).verdict, 'CREATED')
+  const runDir = path.join(home, 'repos', 'example.com-test-anywhere-repo', 'runs', 'W-1')
+  completeArtifact(runDir, 'artifacts/01-context.md', 'W-1', 'CONTEXT',
+    { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
+  assert.equal(cli(['advance', '--repo', 'example.com-test-anywhere-repo'], { home, cwd: elsewhere }).verdict, 'GATE')
+  assert.equal(cli(['approve', '--repo', 'example.com-test-anywhere-repo', '--note', 'yes, approved'], { home, cwd: elsewhere }).stage, 'PLAN')
+  assert.equal(repos.repos[0].active_runs !== undefined, true, 'repos lists active runs')
+})

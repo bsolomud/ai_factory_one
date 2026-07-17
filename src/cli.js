@@ -24,8 +24,33 @@ export function main(argv) {
 
 const commands = {
 
+  repos() {
+    const repos = paths.knownRepos().map(r => ({
+      ...r,
+      active_runs: listRuns(r.slug).filter(x => x.stage !== 'DONE').map(x => x.id)
+    }))
+    return emit({
+      verdict: 'OK',
+      repos,
+      note: repos.length ? 'pass --repo <slug> to any command to target one of these from anywhere' : 'no repos known yet — run pipeline status inside a repo to register it'
+    })
+  },
+
   status(_, flags) {
-    const ctx = resolveRepo(flags)
+    let ctx
+    try {
+      ctx = resolveRepo(flags)
+    } catch (e) {
+      if (!(e instanceof NoRepoError)) throw e
+      const known = paths.knownRepos()
+      return emit({
+        verdict: 'NO_REPO',
+        known_repos: known,
+        next_action: known.length
+          ? 'not inside a repository — ask the developer which repo(s) this task concerns, then re-run with --repo <slug>'
+          : 'not inside a repository and none registered yet — ask the developer for the repo path, then re-run with --repo <path>'
+      })
+    }
     if (!ctx.profile) {
       return emit({
         verdict: 'NO_PROFILE',
@@ -223,11 +248,20 @@ function approveGate(runDir, config, state, { by, note }) {
   return { ...transition(runDir, config, state, { by }), verdict_note: 'gate approved' }
 }
 
+class NoRepoError extends Error {}
+
 function resolveRepo(flags, { requireProfile } = {}) {
-  const repoDir = paths.gitRoot(flags.repo || process.cwd())
-  if (!repoDir) throw new Error('not inside a git repository (or pass --repo <dir>)')
+  let target = flags.repo || process.cwd()
+  // --repo accepts a registered slug as well as a path — /pipeline from any folder.
+  if (flags.repo && !fs.existsSync(flags.repo)) {
+    const known = paths.knownRepos().find(r => r.slug === flags.repo && r.path)
+    if (known) target = known.path
+  }
+  const repoDir = paths.gitRoot(target)
+  if (!repoDir) throw new NoRepoError(`'${target}' is not inside a git repository`)
   const slug = paths.repoSlug(repoDir)
   const profile = loadProfile(paths.profilePath(slug))
+  if (profile) paths.recordRepoLocation(slug, repoDir)
   if (requireProfile && !profile) {
     throw new Error(`no profile for repo '${slug}' — run onboarding first (pipeline status explains how)`)
   }

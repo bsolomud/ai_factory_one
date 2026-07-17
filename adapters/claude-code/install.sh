@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Install ai_factory_one: core assets → pipeline home, adapter → Claude Code.
 # Idempotent; re-run after updating the package. Sandbox-testable via
-# AI_PIPELINE_HOME / CLAUDE_HOME overrides.
+# AI_FACTORY_HOME / CLAUDE_HOME overrides.
 set -euo pipefail
 
 PACKAGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PIPELINE_HOME="${AI_PIPELINE_HOME:-$HOME/.ai-pipeline}"
+PIPELINE_HOME="${AI_FACTORY_HOME:-$HOME/.ai_factory_one}"
 CLAUDE_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 
 echo "package:       $PACKAGE_ROOT"

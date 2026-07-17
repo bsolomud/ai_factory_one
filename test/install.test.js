@@ -30,8 +30,13 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
     assert.ok(fs.existsSync(path.join(home, rel)), `missing ${rel} in pipeline home`)
   }
   assert.ok(fs.existsSync(path.join(claude, 'skills/pipeline/SKILL.md')), 'skill linked')
-  assert.ok(fs.existsSync(path.join(claude, 'agents/pipeline-critic.md')), 'critic agent linked')
-  assert.ok(fs.existsSync(path.join(claude, 'agents/pipeline-reviewer.md')), 'reviewer agent linked')
+  for (const agent of ['planner', 'architect', 'critic', 'implementer', 'qa', 'reviewer']) {
+    assert.ok(fs.existsSync(path.join(claude, `agents/pipeline-${agent}.md`)), `${agent} agent linked`)
+  }
+  const skill = fs.readFileSync(path.join(claude, 'skills/pipeline/SKILL.md'), 'utf8')
+  for (const cmd of ['/pipeline start', '/pipeline work', '/pipeline status']) {
+    assert.ok(skill.includes(cmd), `SKILL.md documents ${cmd}`)
+  }
 
   const settings = JSON.parse(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'))
   assert.equal(settings.model, 'opus', 'unrelated settings preserved')

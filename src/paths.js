@@ -23,7 +23,7 @@ export function asset(...parts) {
 
 export function gitRoot(cwd) {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim()
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
   } catch {
     return null
   }
@@ -34,7 +34,7 @@ export function gitRoot(cwd) {
 export function repoSlug(repoDir) {
   let origin = null
   try {
-    origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repoDir, encoding: 'utf8' }).trim()
+    origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repoDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
   } catch { /* no origin remote */ }
   const base = origin || path.basename(repoDir)
   return base

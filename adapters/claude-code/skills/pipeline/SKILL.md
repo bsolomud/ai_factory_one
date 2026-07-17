@@ -1,38 +1,76 @@
 ---
 name: pipeline
-description: Run the AI development pipeline for a ticket — state-routed; onboarding, planning, implementation, tests, review, PR, CI, retro. Invoke for /pipeline, resuming pipeline runs, or starting pipeline work on a ticket.
+description: AI development pipeline. /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria); /pipeline work continues the current run (breakdown, implementation, tests, review, PR, CI); /pipeline status shows where things stand. Invoke for any /pipeline command or when resuming pipeline work.
+argument-hint: start <ticket|link|text> | work | status | approve
 ---
 
-You are the pipeline engine. Follow these steps EXACTLY and in order.
+You are the pipeline engine. The pipeline CLI lives at
+`~/.ai-pipeline/bin/pipeline` (JSON verdicts on stdout). The user's words after
+`/pipeline` are the subcommand. Route:
 
-1. Run: `~/.ai-pipeline/bin/pipeline status` (JSON on stdout).
-2. Route on `verdict`:
-   - **NO_PROFILE** → read and follow the onboarding runbook at the path in
-     `next_action`, then stop.
-   - **NO_ACTIVE_RUN** → ask the developer for a ticket (ID / link / pasted
-     text), run `~/.ai-pipeline/bin/pipeline new-run <id>`, then continue at 3.
-   - **ACTIVE_RUN** with a `runs` list → ask which run to resume, re-run
-     status with `--run <id>`.
-   - **ACTIVE_RUN** with a single `run` → report the stage and every
-     `reconcile_notes` entry to the user; on their confirmation continue at 3.
-   - **PROFILE_STALE** → summarize `changed_evidence`, follow the re-sync flow
-     in the onboarding runbook first.
-3. Read the file at `stage_prompt`. Follow it completely — it defines this
-   stage's inputs, procedure, and done-condition.
-4. When the stage prompt says you are done, run
-   `~/.ai-pipeline/bin/pipeline advance` and route on its verdict:
-   - **GATE** → validators passed; tell the developer exactly what to review
-     and that THEY must run `! pipeline approve`. STOP.
-   - **ADVANCED / DONE** → tell the user what's next and STOP. Never start the
-     next stage in this session — one stage per session, context discipline.
-   - **BLOCKED** (non-zero exit) → fix every listed reason, retry. After 3
-     failed attempts, show the remaining blockers to the user and STOP.
+## `/pipeline start <ticket-id | link | plain-text task>`
 
-HARD RULES (also enforced by hooks — this is the defense-in-depth copy):
-- Never edit `state.json` or `events.jsonl` by hand; only the CLI writes them.
-- Never write inside the repo outside the implementation stages; artifacts
-  live in the run directory printed by `status`.
-- Never run `git push` before the PR gate is approved.
-- Never run `pipeline approve` yourself — it is the developer's act, always.
-- If `status` lists `unverified` entries, repeat them at every gate so the
-  developer sees weaker guarantees instead of a false green.
+1. Run `~/.ai-pipeline/bin/pipeline status`.
+   - **NO_PROFILE** → tell the user this repo needs one-time onboarding, follow
+     the runbook at the path in `next_action` (interview + verify commands),
+     then continue here.
+   - **PROFILE_STALE** → summarize `changed_evidence`, re-sync per the
+     onboarding runbook, then continue.
+   - An **ACTIVE_RUN already exists** for this task → treat as `work` (below).
+2. Derive a run id: the ticket id if one is present (e.g. `MB-12345`), else a
+   short kebab slug of the task (e.g. `fix-login-redirect`). Run
+   `~/.ai-pipeline/bin/pipeline new-run <id>`.
+3. Save the user's raw input (ticket id/link/pasted text) into the run
+   directory as `artifacts/00-ticket.md` so later sessions have it.
+4. Follow the CONTEXT runbook (`stage_prompt` from status): review the task,
+   read the repo's knowledge layer, and **ask the user your open questions in
+   chat, one focused batch, and wait for answers** — requirements, constraints,
+   and what "done" means. Write `01-context.md` including the
+   **Acceptance criteria** section built from their answers.
+5. Run `~/.ai-pipeline/bin/pipeline advance`. On GATE, tell the user:
+   context + acceptance criteria are ready for review; to approve they type
+   `! pipeline approve` — then `/pipeline work` builds the plan. STOP.
+
+## `/pipeline work`  (also: `continue`, `go`)
+
+1. Run `~/.ai-pipeline/bin/pipeline status` (pass `--run <id>` if the user
+   named one; if multiple runs are listed, ask which).
+2. Report the stage and any `reconcile_notes` (crash recovery is automatic).
+   If `stage_status` is `awaiting_gate`: summarize what awaits their review and
+   remind them of `! pipeline approve`. STOP.
+3. Otherwise read the file at `stage_prompt` and follow it completely. Stages
+   delegate to the specialist agents — spawn them as the runbook instructs:
+   - PLAN → **pipeline-planner** drafts, **pipeline-architect** vets the
+     design, **pipeline-critic** attacks it (fresh context, adversarial)
+   - IMPLEMENT → **pipeline-implementer** per subtask
+   - TEST → **pipeline-qa** audits coverage against the plan's risks and
+     acceptance criteria
+   - REVIEW → **pipeline-reviewer** on the full branch diff
+4. When the runbook says done, run `~/.ai-pipeline/bin/pipeline advance`:
+   - **GATE** → tell the user exactly what to review and that THEY approve
+     with `! pipeline approve`. STOP.
+   - **ADVANCED / DONE** → say what happened and what `/pipeline work` will do
+     next. STOP — one stage per session keeps context sharp.
+   - **BLOCKED** (non-zero exit) → fix every listed reason and retry. After 3
+     failed rounds, show the blockers and STOP.
+
+## `/pipeline status`
+
+Run the CLI `status` and present it for humans: run, stage, substate
+(subtask i of N), unverified checks, reconcile notes, and the exact next step.
+
+## `/pipeline approve`
+
+Approval is the developer's act — you are physically blocked from running it.
+Show them what is awaiting review and tell them to type: `! pipeline approve`
+(optionally `--note "..."`).
+
+## HARD RULES (hooks enforce these too — defense in depth)
+
+- Never edit `state.json`/`events.jsonl` by hand; only the CLI writes them.
+- Never write repo files outside implementation stages; artifacts belong in
+  the run directory from `status`.
+- Never `git push` before the PR gate is approved; never merge, ever.
+- Never run `pipeline approve` yourself, in any form.
+- Repeat any `unverified` entries at every gate — weaker guarantees must be
+  visible, never a false green.

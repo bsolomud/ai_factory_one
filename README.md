@@ -32,19 +32,52 @@ append-only `events.jsonl` + numbered artifacts.
 ## Install
 
 ```bash
-npm install && npm run build
-./adapters/claude-code/install.sh
+./install.sh --claude
 ```
 
-Then in any repo, in a Claude Code session: `/pipeline`.
-- No profile yet → onboarding (hand-written `profile.yml` for now — see
-  `stages/onboard.md`; auto-detection is post-MVP).
-- Active run → resumes exactly where it left off, after crash/interrupt too
-  (`git > artifacts > state.json` — every session reconstructs from disk).
-- Gates are yours: when the CLI says `GATE`, you review and type
-  `! pipeline approve`. The model is physically denied `pipeline approve`,
-  `git push` before the PR gate, writes to `no_touch` paths, and edits to
-  state files (PreToolUse hooks, fail-open when no run is active).
+That's it — it installs dependencies, builds the self-contained CLI, registers
+the `/pipeline` skill, the six specialist agents (**planner, architect,
+critic, implementer, qa, reviewer**), and the gate-guard hooks.
+
+## Use
+
+```
+/pipeline start MB-12345            # or a link, or plain text:
+/pipeline start fix the login redirect looping on expired sessions
+```
+
+The pipeline reviews the task, reads the repo's knowledge, **asks you the
+questions it needs answered in chat**, and writes up requirements + agreed
+**acceptance criteria**. You review; approve with `! pipeline approve`.
+
+```
+/pipeline work
+```
+
+Each `work` invocation advances one stage, delegating to the specialists:
+**planner** drafts the plan → **architect** vets the design → **critic**
+attacks it (fresh context) → you approve → breakdown into subtasks →
+**implementer** codes one gated subtask at a time (lint + targeted tests must
+exit 0 — the CLI certifies, not the model) → **qa** maps every risk and
+acceptance criterion to a test → **reviewer** does the pre-PR review → draft
+PR → CI loop → retro.
+
+```
+/pipeline status                    # where am I, what's next
+! pipeline approve                  # your act at every gate — the model is
+                                    # physically blocked from running it
+```
+
+Interruptions don't matter: kill the laptop mid-subtask and `/pipeline work`
+reconstructs everything from disk (`git > artifacts > state.json`).
+
+The model is hook-denied: `pipeline approve`, `git push` before the PR gate,
+writes to `no_touch` paths, and edits to state files (fail-open when no
+pipeline run is active — normal Claude usage is untouched).
+
+Repo profiles are hand-written for now (see `stages/onboard.md` — the
+onboarding interview runs on first `/pipeline start`; command auto-detection
+is post-MVP).
 
 ## Per-repo profile (`~/.ai-pipeline/repos/<slug>/profile.yml`)
 

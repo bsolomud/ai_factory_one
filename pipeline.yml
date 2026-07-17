@@ -9,7 +9,7 @@ stages:
     output: artifacts/01-context.md
     validate:
       - artifact_complete: artifacts/01-context.md
-      - sections: [Requirements, Findings, Open questions]
+      - sections: [Requirements, Acceptance criteria, Findings, Open questions]
     gate: { required: true, auto_approvable: true }
     next: PLAN
 

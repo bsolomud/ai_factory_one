@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
@@ -65,4 +66,52 @@ test('feedback + abort + show, and metrics reflect them', () => {
 
   assert.equal(run(['abort']).verdict, 'ABORTED')
   assert.equal(run(['status']).verdict, 'NO_ACTIVE_RUN', 'aborted run drops out of active')
+})
+
+test('reopen: backward-only, drops later gates, resets downstream artifacts to draft', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'reopen-repo')
+  installProfile(home, 'example.com-test-reopen-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  const runDir = path.join(home, 'repos', 'example.com-test-reopen-repo', 'runs', 'RE-1')
+  const ac = (rel, stage, secs) => completeArtifact(runDir, rel, 'RE-1', stage, secs)
+
+  run(['new-run', 'RE-1'])
+  ac('artifacts/01-context.md', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. x', Findings: 'f', 'Open questions': 'None.' })
+  run(['advance']); run(['approve'])
+  ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only', 'Testing strategy': 't', 'Open questions': 'None.' })
+  run(['advance']); run(['approve'])
+  ac('artifacts/03-progress.md', 'BREAKDOWN', { Subtasks: '- [ ] 1. only', Deviations: 'None.' })
+  run(['set-substate', 'subtask=1', 'of=1']); run(['advance']); run(['approve'])
+  repo.git('checkout', '-qb', 'RE-1'); repo.write('src/app.sh', 'echo v2\n'); repo.git('add', '-A'); repo.git('commit', '-qm', 's1')
+  run(['advance']); assert.equal(run(['approve']).stage, 'TEST')
+  ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'm', 'Added tests': 'n', Deferred: 'None.' })
+  run(['advance']); assert.equal(run(['approve']).stage, 'REVIEW')
+  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' })
+  run(['advance']); assert.equal(run(['approve']).stage, 'PR')
+
+  // At PR, a late one-line change is needed → reopen IMPLEMENT.
+  const before = run(['status'])
+  assert.equal(before.stage, 'PR')
+  const reopened = run(['reopen', 'IMPLEMENT', '--reason', 'blank the default'])
+  assert.equal(reopened.verdict, 'REOPENED')
+  assert.equal(reopened.from, 'PR')
+  assert.equal(reopened.stage, 'IMPLEMENT')
+  assert.ok(reopened.artifacts_reset.includes('artifacts/04-test-report.md'), 'downstream TEST artifact reset')
+  assert.ok(reopened.artifacts_reset.includes('artifacts/05-review.md'), 'downstream REVIEW artifact reset')
+
+  const after = run(['status'])
+  assert.equal(after.stage, 'IMPLEMENT')
+  assert.equal(after.stage_status, 'in_progress')
+
+  // Downstream artifacts are draft again → TEST will actually re-run, not sail past.
+  const testReport = readFileSync(path.join(runDir, 'artifacts/04-test-report.md'), 'utf8')
+  assert.match(testReport, /status:\s*draft/, 'TEST report reset to draft')
+  // BREAKDOWN's artifact (before IMPLEMENT) is untouched.
+  const progress = readFileSync(path.join(runDir, 'artifacts/03-progress.md'), 'utf8')
+  assert.match(progress, /status:\s*complete/, 'upstream progress artifact preserved')
+
+  // Forward via reopen is rejected; advance is the forward path.
+  assert.equal(run(['reopen', 'PR']).verdict, 'ERROR')
+  assert.equal(run(['reopen', 'NONSENSE']).verdict, 'ERROR')
 })

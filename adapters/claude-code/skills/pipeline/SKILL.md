@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
-argument-hint: start <ticket|link|text> | work | approve [--express] | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -128,6 +128,19 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 than the "small fix" that justified Fast fix, STOP and recommend
 `pipeline set-autonomy gated` before continuing. Conversely, offer
 `set-autonomy express` if a gated run is proving trivial. The developer decides.
+
+## Late change needed at a post-code stage → `/pipeline reopen`
+
+If a change to the code (or plan) is discovered after IMPLEMENT — e.g. a
+one-line tweak spotted at TEST/REVIEW/PR — you CANNOT edit the repo there (the
+guard correctly blocks writes outside the code stages). The sanctioned move is
+to go back: `pipeline reopen IMPLEMENT --repo <slug> --reason "<why>"` (or
+`reopen PLAN` for a design change). It moves the run back, drops the gate
+approvals from that stage onward, and resets the downstream artifacts to draft
+so TEST/REVIEW/PR genuinely re-run (not skipped on a stale `complete` stamp).
+Then make the change in IMPLEMENT, and `/pipeline work` re-advances forward
+through the gates as normal. Backward only — forward is always `advance`.
+Tell the developer you're reopening and why before you do it.
 
 ## `/pipeline onboard [path]`
 

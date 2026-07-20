@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
-argument-hint: start <ticket|link|text> | work | approve | onboard [path] | status | repos
+argument-hint: start <ticket|link|text> | work | approve | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -38,12 +38,20 @@ Return a summary ≤30 lines. Do not paste artifact contents.
 ## Choosing the repo(s) — applies to every subcommand
 
 - `status` → **NO_REPO** → run `pipeline repos`, ask the developer which
-  repo(s) this task concerns (or a path); pass `--repo <slug>` from then on.
+  repo this task concerns (or a path); pass `--repo <slug>` from then on.
 - Inside a repo → default to it; confirm if the task names another.
-- **Multi-repo feature**: confirm the repo set; run the pipeline per repo
-  with the SAME run id; context questions asked ONCE (one context agent per
-  repo, phase-2 answers shared); per-repo plans note their sibling runs;
-  gates per repo; order work by dependency and say which repo is advancing.
+- **Multi-repo features are OUT OF SCOPE for pilot v1.** If a task spans
+  several repos, tell the developer to run one repo now and open a separate
+  `/pipeline start` for the other; do not attempt to link runs. (A real
+  linked-run mechanism is planned post-pilot.)
+
+## Spawning agents — cost guardrail
+
+Before you spawn ANY stage agent, run
+`pipeline agent-start <label> --repo <slug>`. It returns OK with the running
+tally, or BLOCKED if this run hit its agent ceiling (a runaway-loop backstop).
+On BLOCKED: stop, show the developer the tally, and ask before raising the
+limit. This is how the pilot keeps token cost bounded and measurable.
 
 ## `/pipeline start <ticket-id | link | plain text>`
 
@@ -99,15 +107,31 @@ Own agent, interactive via two phases:
    gate summary, every `unverified` entry.
 2. Ask for explicit confirmation; WAIT.
 3. Only on an explicit yes in the developer's own words:
-   `pipeline approve --note "<their words>"`. Report what's next.
+   `pipeline approve --note "<their words>"`. If the developer changed the
+   artifact (or asked you to) before approving, add `--edited` — this feeds
+   the gate-edit-rate quality metric, so be honest about it.
 4. No / change request → dispatch the change to the stage's agent, re-present.
 NEVER approve otherwise — not to unblock yourself, not because it "looks
 trivial", never bundled with another command. Every approval is audited.
 
-## `/pipeline status` · `/pipeline repos`
+## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics`
 
-Run the CLI and present for humans: run(s), repo(s), stage, substate
-(subtask i of N), unverified checks, reconcile notes, exact next step.
+Run the matching CLI command and present for humans:
+- **status / show** — run(s), stage, substate (subtask i of N), unverified
+  checks, reconcile notes, exact next step (`show` also returns the current
+  artifact body for review).
+- **repos** — repos the pipeline knows and their active runs.
+- **metrics** — pilot numbers (first-pass-green rate, gate-edit rate, blocked
+  histogram, critic rounds, agents spawned, feedback notes). Present the
+  headline rates and say what they imply.
+- **doctor** — validates the repo profile; relay errors/warnings plainly.
+
+## `/pipeline feedback "<note>"`
+
+Whenever the developer voices a reaction to how a stage went (good or bad),
+record it: `pipeline feedback "<their note>" --repo <slug>`. It lands in the
+run's audit log for the SCRIBE retro and the pilot metrics. Capturing this is
+part of the job, not optional.
 
 ## HARD RULES (hooks enforce most — defense in depth; agents inherit them)
 

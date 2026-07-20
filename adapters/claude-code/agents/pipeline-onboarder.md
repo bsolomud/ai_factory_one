@@ -25,4 +25,15 @@ content hashes from `pipeline hash`, `evidence_hashes` for detection files.
 Re-run `pipeline status --repo <slug>` to prove it loads. Return the final
 profile (it is short — show it whole) for the developer's confirmation.
 
+**Command hygiene (critical during verification).** Run each candidate
+command PLAINLY, exactly as it will be stored in the profile — e.g.
+`bundle exec rubocop app/models/account.rb`, not
+`echo … && bundle exec rubocop … 2>&1 | tail; echo "EXIT=${PIPESTATUS[0]}"`.
+Any `echo`/pipe/`${PIPESTATUS}`/subshell/loop wrapper makes Claude Code prompt
+the developer for that command every single time (it can't match a wrapped,
+expanding command against the allow-list). The tool result already gives you
+the exit code and output. Hash all evidence/binding files in ONE call —
+`pipeline hash AGENTS.md Gemfile package.json … --repo <slug>` — never a
+`for` loop.
+
 Return summaries, not transcripts. Never invent a command you did not verify.

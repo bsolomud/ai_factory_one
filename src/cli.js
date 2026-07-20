@@ -326,6 +326,49 @@ const commands = {
     return emit({ verdict: 'OK', label, spawned: spawned + 1, ceiling })
   },
 
+  // Move a run BACKWARD to an earlier stage — the sanctioned way to make a late
+  // change (e.g. a one-line fix discovered at PR): reopen IMPLEMENT, change it,
+  // then re-advance through the gates. Backward-only; forward is `advance`.
+  reopen(positional, flags) {
+    const { config, runDir, state } = loadRun(flags)
+    const target = positional[0] || flags.stage
+    const order = config.order
+    if (!target || !order.includes(target)) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline reopen <stage> — one of: ${order.join(', ')}` }, 1)
+    }
+    const currentPos = state.stage === 'DONE' ? order.length : order.indexOf(state.stage)
+    const targetIdx = order.indexOf(target)
+    if (targetIdx >= currentPos) {
+      return emit({ verdict: 'ERROR', error: `reopen only moves backward (run is at ${state.stage}); to go forward use 'pipeline advance'` }, 1)
+    }
+    // Drop gate approvals for the target stage and everything after it — they
+    // must be re-earned on the way forward (also keeps the guard's push check
+    // correct: a stale PR approval can't survive a reopen to IMPLEMENT).
+    state.gates = state.gates.filter(g => order.indexOf(g.stage) < targetIdx)
+    // Reset the output artifact of the target stage and all later stages back to
+    // draft, so their validators force the work to actually be redone (a code
+    // change must re-run TEST/REVIEW, not sail past their stale 'complete' stamp).
+    const reset = []
+    for (let i = targetIdx; i < order.length; i++) {
+      const out = config.stages[order[i]].output
+      if (out && resetArtifactStatus(path.join(runDir, out))) reset.push(out)
+    }
+    const from = state.stage
+    state.stage = target
+    state.stage_status = 'in_progress'
+    state.substate.critic_round = 0
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'reopened', from, to: target, reason: flags.reason || '' })
+    return emit({
+      verdict: 'REOPENED',
+      from,
+      stage: target,
+      stage_prompt: paths.asset(config.stages[target].prompt),
+      artifacts_reset: reset,
+      next_action: `run reopened at ${target}; make the change, then '/pipeline work' re-advances through the gates (downstream artifacts were reset so TEST/REVIEW/PR re-run).`
+    })
+  },
+
   'set-substate'(positional, flags) {
     const { runDir, state } = loadRun(flags)
     const WHITELIST = ['critic_round', 'subtask', 'of']
@@ -359,6 +402,17 @@ const commands = {
 }
 
 // ---------------------------------------------------------------- helpers
+
+// Flip an artifact's frontmatter status back to draft (used by reopen). Returns
+// true if the file existed and was (re)set. Targeted regex on the frontmatter
+// value preserves the rest of the file's formatting.
+function resetArtifactStatus(file) {
+  if (!fs.existsSync(file)) return false
+  const raw = fs.readFileSync(file, 'utf8')
+  const updated = raw.replace(/(^---\n[\s\S]*?\bstatus:[ \t]*)\S+/m, '$1draft')
+  if (updated !== raw) fs.writeFileSync(file, updated)
+  return true
+}
 
 function transition(runDir, config, state, { by }) {
   const next = config.stages[state.stage].next

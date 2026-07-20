@@ -108,6 +108,9 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
 - [x] **Express (Fast fix) autonomy** — `gated | express`; express auto-approves quality
   gates once validators pass, keeps `human_required` gates (PR/CI); `set-autonomy`,
   `approve --express`.
+- [x] **Backward transitions (`pipeline reopen <stage>`)** — sanctioned late-change path
+  discovered at a post-code stage: moves the run back, drops later gate approvals, resets
+  downstream artifacts to draft so TEST/REVIEW/PR re-run; guard stays correct.
 
 ## Post-MVP — planned / future (not started)
 
@@ -186,3 +189,8 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
   for the pipeline CLI + home; command-hygiene rule so agents issue plain commands.
 - 2026-07-20 — Reconciled this plan with shipped state: added Post-MVP delivered/future
   sections incl. **parallel-tickets-via-worktrees**; corrected VC4 (express, not auto_low_risk).
+- 2026-07-20 — **Backward transitions** (`pipeline reopen <stage>`): surfaced by a live
+  portal run stuck at PR needing a one-line code change (guard correctly blocked the write).
+  Backward-only; drops gate approvals from the target stage onward; resets downstream
+  artifacts to draft so TEST/REVIEW/PR re-run instead of sailing past stale `complete`
+  stamps. SKILL documents it as the late-change path. 52/52 tests; rebuilt + reinstalled live.

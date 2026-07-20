@@ -113,3 +113,9 @@ substrate; run the live toy ticket after `install.sh`.
   agents, feedback — from events.jsonl); `feedback`, `doctor` (profile schema), `show`,
   `abort`, `agent-start` (per-run spawn ceiling); `approve --edited` for the edit signal;
   PILOT.md playbook; multi-repo descoped to post-pilot. 50/50 tests.
+- 2026-07-20 — **Express (Fast fix) autonomy**: two modes, gated | express. Express
+  auto-approves quality gates (CONTEXT/PLAN/BREAKDOWN/IMPLEMENT/TEST/REVIEW) once their
+  validators pass; PR and CI gates flagged human_required stay human (push is irreversible);
+  validators still BLOCK on red in either mode. AI recommends the mode at the CONTEXT gate
+  from scope; set-autonomy switches mid-run; approve --express shortcut. Dropped auto_low_risk.
+  51/51 tests.

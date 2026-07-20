@@ -83,7 +83,24 @@ questions it needs answered in chat**, and writes up requirements + agreed
 /pipeline work
 ```
 
-Each `work` invocation advances one stage, delegating to the specialists:
+### Two speeds: Gated vs Fast fix
+
+At the context gate the pipeline recommends a mode based on the scope it sees:
+
+- **Gated** (default) — you approve every stage.
+- **Fast fix (express)** — the *quality* gates (plan, implement, test, review)
+  auto-approve **once their validators pass**, so a small change flows straight
+  through; you approve just **once, at the PR gate**, before anything is pushed.
+
+The line is deliberate: express drops the redundant human sign-off on gates the
+deterministic checks already enforce (lint/tests/write-boundary still gate on
+red — express never bypasses a validator), but keeps you in control of the
+irreversible steps — the push at PR and any CI fix are always human-approved,
+and merge is never automated. Switch either way mid-run with
+`/pipeline set-autonomy` if the scope turns out different than it looked.
+
+Each `work` invocation advances one stage (or several, in express),
+delegating to the specialists:
 **planner** drafts the plan → **architect** vets the design → **critic**
 attacks it (fresh context) → you approve → breakdown into subtasks →
 **implementer** codes one gated subtask at a time (lint + targeted tests must
@@ -92,8 +109,9 @@ acceptance criterion to a test → **reviewer** does the pre-PR review → draft
 PR → CI loop → retro.
 
 ```
-/pipeline approve                   # shows you exactly what's under review,
-                                    # waits for your explicit yes, records it
+/pipeline approve [--express]       # approve the gate; --express switches to
+                                    # Fast fix (below) as you approve context
+/pipeline set-autonomy gated|express   # switch modes any time mid-run
 /pipeline onboard <path>            # analyze a repo + bind its skills (below)
 /pipeline status                    # where am I, what's next
 /pipeline show                      # the current artifact/diff, for review

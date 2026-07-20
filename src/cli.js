@@ -13,6 +13,13 @@ import * as paths from './paths.js'
 // Exit codes: 0 = success verdicts, 1 = BLOCKED/error. A non-zero exit surfaces
 // as a tool error to the model — a far stronger signal than prose.
 
+// Autonomy modes: 'gated' = a human approves every gate; 'express' (Fast fix) =
+// the human approves only irreversible gates (human_required: push/PR/CI),
+// everything else auto-approves ONCE ITS VALIDATORS PASS — the deterministic
+// checks (lint/tests/boundary) still gate; express only drops the redundant
+// human sign-off on those quality gates.
+const AUTONOMY_MODES = ['gated', 'express']
+
 export function main(argv) {
   const { command, positional, flags } = parseArgs(argv)
   try {
@@ -126,6 +133,7 @@ const commands = {
       run: state.run_id,
       stage: state.stage,
       stage_status: state.stage_status,
+      autonomy: state.autonomy,
       substate: state.substate,
       unverified: state.unverified,
       reconcile_notes: notes,
@@ -149,8 +157,8 @@ const commands = {
     const base = ctx.profile?.conventions?.base_branch || 'master'
     const state = newState({ runId, repo: ctx.slug, stage: config.first, base })
     if (flags.autonomy) {
-      if (!['gated', 'auto_low_risk'].includes(flags.autonomy)) {
-        return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (gated | auto_low_risk)` }, 1)
+      if (!AUTONOMY_MODES.includes(flags.autonomy)) {
+        return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (${AUTONOMY_MODES.join(' | ')})` }, 1)
       }
       state.autonomy = flags.autonomy
     }
@@ -191,14 +199,17 @@ const commands = {
     state.stage_status = 'awaiting_gate'
     writeState(runDir, state)
     appendEvent(runDir, { event: 'validated', stage: stageName, subtask: state.substate.subtask ?? undefined })
-    if (gate.auto_approvable && state.autonomy === 'auto_low_risk') {
-      return emit(approveGate(runDir, config, state, { by: 'auto', note: 'auto-approved (auto_low_risk)' }))
+    // Express (Fast fix): validators passed AND this gate isn't an irreversible
+    // one (push/PR/CI) → auto-approve. Human gates (human_required) always stop.
+    if (state.autonomy === 'express' && !gate.human_required) {
+      return emit(approveGate(runDir, config, state, { by: 'auto', note: 'express mode (validators passed)' }))
     }
     return emit({
       verdict: 'GATE',
       stage: stageName,
       subtask: state.substate.subtask ?? undefined,
       unverified: state.unverified,
+      human_required: !!gate.human_required,
       next_action: `validators passed — present the artifact/diff to the developer for review; on their explicit yes run '/pipeline approve'. STOP here.`
     })
   },
@@ -209,7 +220,28 @@ const commands = {
     if (state.stage_status !== 'awaiting_gate') {
       return emit({ verdict: 'ERROR', error: `nothing awaiting approval — stage ${state.stage} is ${state.stage_status}; run 'pipeline advance' first` }, 1)
     }
+    if (flags.express) state.autonomy = 'express' // shortcut: pick Fast fix at this gate
+    if (flags.gated) state.autonomy = 'gated'
     return emit(approveGate(runDir, config, state, { by: flags.by || 'human', note: flags.note || '', edited: !!flags.edited }))
+  },
+
+  'set-autonomy'(positional, flags) {
+    const { runDir, state } = loadRun(flags)
+    const mode = positional[0] || flags.mode
+    if (!AUTONOMY_MODES.includes(mode)) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline set-autonomy <${AUTONOMY_MODES.join('|')}>` }, 1)
+    }
+    const from = state.autonomy
+    state.autonomy = mode
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'autonomy', from, to: mode })
+    return emit({
+      verdict: 'OK',
+      autonomy: mode,
+      note: mode === 'express'
+        ? 'Fast fix: quality gates (plan/implement/test/review) auto-approve once their validators pass; you still approve the push at PR and any CI fix.'
+        : 'Gated: you approve every stage.'
+    })
   },
 
   metrics(_, flags) {
@@ -254,6 +286,7 @@ const commands = {
       run: state.run_id,
       stage: state.stage,
       stage_status: state.stage_status,
+      autonomy: state.autonomy,
       substate: state.substate,
       unverified: state.unverified,
       current_artifact: artifactRel || null,

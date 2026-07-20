@@ -10,7 +10,7 @@ stages:
     validate:
       - artifact_complete: artifacts/01-context.md
       - sections: [Requirements, Acceptance criteria, Findings, Open questions]
-    gate: { required: true, auto_approvable: true }
+    gate: { required: true }
     next: PLAN
 
   PLAN:
@@ -22,7 +22,7 @@ stages:
       - artifact_complete: artifacts/02-plan.md
       - sections: [Approach, Affected files, Risks, Subtasks, Testing strategy, Open questions]
       - files_exist_in_repo: Affected files
-    gate: { required: true, auto_approvable: false }
+    gate: { required: true }
     next: BREAKDOWN
 
   BREAKDOWN:
@@ -33,7 +33,7 @@ stages:
       - artifact_complete: artifacts/03-progress.md
       - sections: [Subtasks, Deviations]
       - substate_set: [subtask, of]
-    gate: { required: true, auto_approvable: true }
+    gate: { required: true }
     next: IMPLEMENT
 
   IMPLEMENT:
@@ -45,7 +45,7 @@ stages:
       - profile_command: post_change_hooks
       - git_clean_within: plan.affected_paths
       - min_commits_per_subtask: 1
-    gate: { required: true, auto_approvable: false }
+    gate: { required: true }
     next: TEST
 
   TEST:
@@ -57,7 +57,7 @@ stages:
       - sections: [Coverage audit, Risk-to-test map, Added tests, Deferred]
       - profile_command: lint_changed
       - profile_command: test_targeted
-    gate: { required: true, auto_approvable: false }
+    gate: { required: true }
     next: REVIEW
 
   REVIEW:
@@ -70,7 +70,7 @@ stages:
       - sections: [Findings, Fixes applied, Disputed, Plan-vs-shipped check]
       - profile_command: lint_changed
       - profile_command: test_targeted
-    gate: { required: true, auto_approvable: false }
+    gate: { required: true }
     next: PR
 
   PR:
@@ -80,7 +80,7 @@ stages:
     validate:
       - artifact_complete: artifacts/06-pr-draft.md
       - sections: [Title, Description, Testing notes, Ops notes, Reviewer guidance]
-    gate: { required: true, auto_approvable: false }   # THIS approval unlocks push in the guard
+    gate: { required: true, human_required: true }   # push is irreversible → human even in express mode; approving unlocks push in the guard
     next: CI
 
   CI:
@@ -89,7 +89,7 @@ stages:
     validate:
       - artifact_complete: artifacts/07-ci-analysis.md
       - sections: [Runs analyzed, Classification, Fixes, Outcome]
-    gate: { required: true, auto_approvable: false }
+    gate: { required: true, human_required: true }   # CI fixes get pushed → human even in express mode
     next: SCRIBE
 
   SCRIBE:
@@ -98,5 +98,5 @@ stages:
     validate:
       - artifact_complete: artifacts/08-retro.md
       - sections: [Plan-vs-shipped, Learnings, Routing]
-    gate: { required: true, auto_approvable: true }
+    gate: { required: true }
     next: DONE

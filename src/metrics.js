@@ -38,6 +38,14 @@ export function runMetrics(runDir, runId) {
   const validatedStages = Object.values(stages).filter(s => s.reached_validate)
   const firstPass = validatedStages.filter(s => s.first_pass === true).length
 
+  const spawns = events.filter(e => e.event === 'agent_spawned')
+  const skips = events.filter(e => e.event === 'check_skipped')
+  // A skip is a genuine coverage gap only when the profile has NO command for the
+  // slot. "command exists but resolved to no matching files" (e.g. a config/view/
+  // spec-only subtask with no mirror spec) is expected bookkeeping, not a gap —
+  // separate them so a real UNVERIFIED isn't diluted (MB-46498 retro).
+  const noCommandSkips = skips.filter(e => /slot .* is empty|no .* command/i.test(e.reason || '')).length
+
   return {
     run: runId,
     duration_s: start != null && end != null ? Math.round((end - start) / 1000) : null,
@@ -50,9 +58,15 @@ export function runMetrics(runDir, runId) {
     gates_by: tally(gates.map(g => g.by || 'human')),
     gate_edits: gates.filter(g => g.edited).length,
     gate_edit_rate: gates.length ? round(gates.filter(g => g.edited).length / gates.length) : null,
-    critic_rounds: maxSubstate(events, 'critic_round'),
-    agents_spawned: events.filter(e => e.event === 'agent_spawned').length,
-    checks_skipped: events.filter(e => e.event === 'check_skipped').length,
+    // Prefer recorded substate; fall back to counting critic agent spawns, so a
+    // dispatcher that ran the critic but forgot `set-substate critic_round` still
+    // reports the real engagement (MB-46498: critic ran 2 rounds, substate said 0).
+    critic_rounds: Math.max(maxSubstate(events, 'critic_round'), spawns.filter(e => /critic/i.test(e.label || '')).length),
+    agents_spawned: spawns.length,
+    agents_by_label: tally(spawns.map(e => (e.label || 'agent').replace(/-?(r?\d+|st\d+)$/i, '') || 'agent')),
+    checks_skipped: skips.length,
+    checks_skipped_no_command: noCommandSkips,
+    checks_skipped_no_target: skips.length - noCommandSkips,
     feedback_notes: events.filter(e => e.event === 'feedback').length,
     seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)]))
   }

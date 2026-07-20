@@ -194,3 +194,10 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
   Backward-only; drops gate approvals from the target stage onward; resets downstream
   artifacts to draft so TEST/REVIEW/PR re-run instead of sailing past stale `complete`
   stamps. SKILL documents it as the late-change path. 52/52 tests; rebuilt + reinstalled live.
+- 2026-07-20 — **First full live run (portal MB-46498)** reached SCRIBE + PR #988. Metrics:
+  first-pass-green 0.89 (8/9), gate-edit-rate 0.06 (1/18), critic caught 2 real bugs (race
+  window in atomic-disable, spec not reproducing the named crash frame), 26 agents, ~2.8h wall.
+  Two feedback gaps both ALREADY shipped (express, reopen). Fixed from this run's evidence:
+  (1) metrics undercounted critic_rounds (said 0; critic ran 2 rounds) — now derives from
+  critic agent spawns + adds agents_by_label; (2) test_targeted 'no files' skip reworded as
+  benign + split checks_skipped into no_command (real gap) vs no_target (bookkeeping). 54 tests.

@@ -96,8 +96,15 @@ PR → CI loop → retro.
                                     # waits for your explicit yes, records it
 /pipeline onboard <path>            # analyze a repo + bind its skills (below)
 /pipeline status                    # where am I, what's next
+/pipeline show                      # the current artifact/diff, for review
 /pipeline repos                     # repos the pipeline knows, active runs
+/pipeline feedback "<note>"         # capture a reaction (feeds retro + metrics)
+/pipeline metrics                   # pilot numbers for this repo
+/pipeline doctor                    # validate the repo profile
 ```
+
+Piloting it? See **[PILOT.md](PILOT.md)** for the run-one-ticket playbook and
+how to read the metrics.
 
 Every approval requires your explicit confirmation in chat and is recorded —
 with your words — in the run's audit log (`events.jsonl`).

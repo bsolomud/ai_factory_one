@@ -108,3 +108,8 @@ substrate; run the live toy ticket after `install.sh`.
   interactive steps are two-phase (agent returns questions → developer answers → fresh
   agent writes). New agents: onboarder, context, stage-runner; planner/reviewer now write
   their artifacts directly. 42/42 tests.
+- 2026-07-20 — **Pilot-readiness (suggestions #1,#3,#4,#5,#8,#10)**: removed dry_run;
+  `pipeline metrics` (first-pass-green + gate-edit rates, blocked histogram, critic rounds,
+  agents, feedback — from events.jsonl); `feedback`, `doctor` (profile schema), `show`,
+  `abort`, `agent-start` (per-run spawn ceiling); `approve --edited` for the edit signal;
+  PILOT.md playbook; multi-repo descoped to post-pilot. 50/50 tests.

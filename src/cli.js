@@ -2,9 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
-import { loadProfile } from './profile.js'
+import { loadProfile, validateProfile } from './profile.js'
+import { aggregate, runMetrics } from './metrics.js'
+import { parseArtifact } from './artifacts.js'
 import { reconcile } from './reconcile.js'
-import { appendEvent, newState, readState, writeState } from './state.js'
+import { appendEvent, newState, readEvents, readState, writeState } from './state.js'
 import { runValidators } from './validators.js'
 import * as paths from './paths.js'
 
@@ -147,8 +149,8 @@ const commands = {
     const base = ctx.profile?.conventions?.base_branch || 'master'
     const state = newState({ runId, repo: ctx.slug, stage: config.first, base })
     if (flags.autonomy) {
-      if (!['gated', 'auto_low_risk', 'dry_run'].includes(flags.autonomy)) {
-        return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (gated | auto_low_risk | dry_run)` }, 1)
+      if (!['gated', 'auto_low_risk'].includes(flags.autonomy)) {
+        return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (gated | auto_low_risk)` }, 1)
       }
       state.autonomy = flags.autonomy
     }
@@ -169,7 +171,7 @@ const commands = {
     if (state.stage_status === 'awaiting_gate') {
       return emit({
         verdict: 'BLOCKED',
-        reasons: [`stage ${state.stage} is awaiting gate approval — the developer must run 'pipeline approve' themselves (in Claude Code: type '! pipeline approve'). Do not run it on their behalf.`]
+        reasons: [`stage ${state.stage} is awaiting gate approval — present the gate to the developer and get their explicit confirmation, then run '/pipeline approve'. Do not approve on your own initiative.`]
       }, 1)
     }
     const stageName = state.stage
@@ -197,7 +199,7 @@ const commands = {
       stage: stageName,
       subtask: state.substate.subtask ?? undefined,
       unverified: state.unverified,
-      next_action: `validators passed — the developer must review and run 'pipeline approve' (in Claude Code: '! pipeline approve'). STOP here.`
+      next_action: `validators passed — present the artifact/diff to the developer for review; on their explicit yes run '/pipeline approve'. STOP here.`
     })
   },
 
@@ -207,7 +209,88 @@ const commands = {
     if (state.stage_status !== 'awaiting_gate') {
       return emit({ verdict: 'ERROR', error: `nothing awaiting approval — stage ${state.stage} is ${state.stage_status}; run 'pipeline advance' first` }, 1)
     }
-    return emit(approveGate(runDir, config, state, { by: flags.by || 'human', note: flags.note || '' }))
+    return emit(approveGate(runDir, config, state, { by: flags.by || 'human', note: flags.note || '', edited: !!flags.edited }))
+  },
+
+  metrics(_, flags) {
+    const ctx = resolveRepo(flags, { requireProfile: true })
+    if (flags.run) {
+      return emit({ verdict: 'OK', ...runMetrics(paths.runDir(ctx.slug, flags.run), flags.run) })
+    }
+    const perRun = listRuns(ctx.slug).map(r => runMetrics(paths.runDir(ctx.slug, r.id), r.id))
+    return emit({ verdict: 'OK', repo: ctx.slug, summary: aggregate(perRun), runs: perRun })
+  },
+
+  feedback(positional, flags) {
+    const { runDir } = loadRun(flags)
+    const note = positional.join(' ').trim()
+    if (!note) return emit({ verdict: 'ERROR', error: 'usage: pipeline feedback "<your note>"' }, 1)
+    appendEvent(runDir, { event: 'feedback', stage: flags.stage, note })
+    return emit({ verdict: 'OK', recorded: note })
+  },
+
+  doctor(_, flags) {
+    const ctx = resolveRepo(flags)
+    if (!ctx.profile) {
+      return emit({ verdict: 'NO_PROFILE', repo: ctx.slug, next_action: 'run onboarding first: pipeline onboard' }, 1)
+    }
+    const { errors, warnings } = validateProfile(ctx.profile)
+    return emit({
+      verdict: errors.length ? 'INVALID' : 'OK',
+      repo: ctx.slug,
+      profile_path: paths.profilePath(ctx.slug),
+      errors,
+      warnings
+    }, errors.length ? 1 : 0)
+  },
+
+  show(_, flags) {
+    const { config, runDir, state } = loadRun(flags)
+    const def = config.stages[state.stage]
+    const artifactRel = def?.output
+    const artifact = artifactRel ? parseArtifact(path.join(runDir, artifactRel)) : null
+    return emit({
+      verdict: 'OK',
+      run: state.run_id,
+      stage: state.stage,
+      stage_status: state.stage_status,
+      substate: state.substate,
+      unverified: state.unverified,
+      current_artifact: artifactRel || null,
+      artifact_status: artifact?.frontmatter?.status ?? null,
+      artifact_body: artifact?.body ?? null,
+      gates_approved: state.gates.length
+    })
+  },
+
+  abort(_, flags) {
+    const { runDir, state } = loadRun(flags)
+    if (state.stage === 'DONE') return emit({ verdict: 'OK', note: 'run already finished' })
+    appendEvent(runDir, { event: 'run_aborted', from: state.stage })
+    state.aborted = true
+    state.stage = 'DONE'
+    state.stage_status = 'complete'
+    writeState(runDir, state)
+    return emit({
+      verdict: 'ABORTED',
+      run: state.run_id,
+      note: `run marked aborted at ${runDir}. Its git branch (if any) was left untouched — remove it manually if unwanted.`
+    })
+  },
+
+  'agent-start'(positional, flags) {
+    const { ctx, runDir, state } = loadRun(flags)
+    const label = positional[0] || flags.label || 'agent'
+    const ceiling = Number(flags.max ?? ctx.profile?.limits?.max_agents_per_run ?? 40)
+    const spawned = readEvents(runDir).filter(e => e.event === 'agent_spawned').length
+    if (spawned >= ceiling) {
+      return emit({
+        verdict: 'BLOCKED',
+        reasons: [`agent-spawn ceiling reached for this run (${spawned}/${ceiling}). This guards against a runaway loop. If the work legitimately needs more, raise limits.max_agents_per_run in the profile or pass --max, and tell the developer why.`]
+      }, 1)
+    }
+    appendEvent(runDir, { event: 'agent_spawned', stage: state.stage, label })
+    return emit({ verdict: 'OK', label, spawned: spawned + 1, ceiling })
   },
 
   'set-substate'(positional, flags) {
@@ -259,11 +342,11 @@ function transition(runDir, config, state, { by }) {
   }
 }
 
-function approveGate(runDir, config, state, { by, note }) {
+function approveGate(runDir, config, state, { by, note, edited = false }) {
   const stageDef = config.stages[state.stage]
-  const gateEntry = { stage: state.stage, subtask: state.substate.subtask ?? null, approved: true, by, at: new Date().toISOString(), note }
+  const gateEntry = { stage: state.stage, subtask: state.substate.subtask ?? null, approved: true, by, at: new Date().toISOString(), note, edited }
   state.gates.push(gateEntry)
-  appendEvent(runDir, { event: 'gate_approved', stage: state.stage, subtask: gateEntry.subtask ?? undefined, by, note })
+  appendEvent(runDir, { event: 'gate_approved', stage: state.stage, subtask: gateEntry.subtask ?? undefined, by, note, edited })
   if (stageDef.per_subtask && state.substate.subtask != null && state.substate.of != null && state.substate.subtask < state.substate.of) {
     state.substate.subtask += 1
     state.stage_status = 'in_progress'

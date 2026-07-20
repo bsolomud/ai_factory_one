@@ -197,25 +197,72 @@ no_touch: []
   assert.equal(run(['approve']).stage, 'TEST')
 })
 
-// VC4: auto_approvable gates self-approve ONLY under auto_low_risk autonomy.
-test('autonomy=auto_low_risk auto-approves auto_approvable gates only', { timeout: 60_000 }, () => {
+// Express (Fast fix): quality gates auto-approve once validators pass; the
+// irreversible gates (PR/CI, human_required) still stop for a human. Validators
+// still BLOCK on red even in express.
+test('express mode auto-approves quality gates, stops at PR, still blocks on red', { timeout: 90_000 }, () => {
   const { root, home } = sandbox()
-  const repo = standardRepo(root, 'auto-repo')
-  installProfile(home, 'example.com-test-auto-repo', STANDARD_PROFILE)
+  const repo = standardRepo(root, 'express-repo')
+  installProfile(home, 'example.com-test-express-repo', STANDARD_PROFILE)
   const run = args => cli(args, { home, cwd: repo.dir })
-  const runDir = path.join(home, 'repos', 'example.com-test-auto-repo', 'runs', 'A-1')
+  const runDir = path.join(home, 'repos', 'example.com-test-express-repo', 'runs', 'X-1')
 
-  assert.equal(run(['new-run', 'A-1', '--autonomy', 'auto_low_risk']).verdict, 'CREATED')
-  completeArtifact(runDir, 'artifacts/01-context.md', 'A-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
-  const advanced = run(['advance'])
-  assert.equal(advanced.verdict, 'ADVANCED', 'CONTEXT (auto_approvable) self-approved')
-  assert.equal(advanced.stage, 'PLAN')
+  assert.equal(run(['new-run', 'X-1', '--autonomy', 'express']).verdict, 'CREATED')
 
-  completeArtifact(runDir, 'artifacts/02-plan.md', 'A-1', 'PLAN', {
-    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. x',
+  // CONTEXT: validators pass → auto-approved (no human), advances to PLAN.
+  completeArtifact(runDir, 'artifacts/01-context.md', 'X-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
+  const ctx = run(['advance'])
+  assert.equal(ctx.verdict, 'ADVANCED', 'CONTEXT auto-approved in express')
+  assert.equal(ctx.stage, 'PLAN')
+
+  // PLAN with a hallucinated path STILL blocks — validators gate regardless of mode.
+  completeArtifact(runDir, 'artifacts/02-plan.md', 'X-1', 'PLAN', {
+    Approach: 'a', 'Affected files': '- `src/app.sh`\n- `src/ghost.sh`', Risks: 'r', Subtasks: '1. x',
     'Testing strategy': 't', 'Open questions': 'None.'
   })
-  assert.equal(run(['advance']).verdict, 'GATE', 'PLAN gate (auto_approvable: false) still requires a human')
+  assert.equal(run(['advance']).verdict, 'BLOCKED', 'express does NOT bypass validators')
+
+  // Fix the plan → auto-approves through PLAN and BREAKDOWN without a human.
+  completeArtifact(runDir, 'artifacts/02-plan.md', 'X-1', 'PLAN', {
+    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only',
+    'Testing strategy': 't', 'Open questions': 'None.'
+  })
+  assert.equal(run(['advance']).stage, 'BREAKDOWN', 'PLAN auto-approved in express')
+  completeArtifact(runDir, 'artifacts/03-progress.md', 'X-1', 'BREAKDOWN', { Subtasks: '- [ ] 1. only', Deviations: 'None.' })
+  run(['set-substate', 'subtask=1', 'of=1'])
+  assert.equal(run(['advance']).stage, 'IMPLEMENT', 'BREAKDOWN auto-approved in express')
+
+  // IMPLEMENT subtask (validators run), then TEST, REVIEW all auto-approve → land at PR.
+  repo.git('checkout', '-qb', 'X-1')
+  repo.write('src/app.sh', 'echo v2\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'X-1 subtask 1')
+  assert.equal(run(['advance']).stage, 'TEST', 'IMPLEMENT subtask auto-approved in express')
+  completeArtifact(runDir, 'artifacts/04-test-report.md', 'X-1', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'm', 'Added tests': 'n', Deferred: 'None.' })
+  assert.equal(run(['advance']).stage, 'REVIEW', 'TEST auto-approved in express')
+  completeArtifact(runDir, 'artifacts/05-review.md', 'X-1', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' })
+
+  // REVIEW auto-approves and advances INTO PR (in_progress; PR artifact not made yet).
+  const intoPr = run(['advance'])
+  assert.equal(intoPr.stage, 'PR', 'REVIEW auto-approved, now at PR')
+  assert.notEqual(intoPr.verdict, 'GATE', 'advancing through REVIEW is not itself a human gate')
+
+  // Now produce the PR artifact and advance AT PR → the human gate fires even in express.
+  completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'X-1', 'PR', { Title: 't', Description: 'd', 'Testing notes': 'n', 'Ops notes': 'None.', 'Reviewer guidance': 'g' })
+  const prGate = run(['advance'])
+  assert.equal(prGate.verdict, 'GATE', 'PR still requires a human even in express')
+  assert.equal(prGate.human_required, true, 'PR gate flagged human_required')
+})
+
+test('set-autonomy switches modes mid-run', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'switch-repo')
+  installProfile(home, 'example.com-test-switch-repo', STANDARD_PROFILE)
+  const run = args => cli(args, { home, cwd: repo.dir })
+  run(['new-run', 'S-1']) // defaults to gated
+  assert.equal(run(['status']).autonomy, 'gated')
+  assert.equal(run(['set-autonomy', 'express']).autonomy, 'express')
+  assert.equal(run(['status']).autonomy, 'express')
+  assert.equal(run(['set-autonomy', 'nonsense']).verdict, 'ERROR')
 })
 
 // Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.

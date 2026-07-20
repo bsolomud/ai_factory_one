@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
-argument-hint: start <ticket|link|text> | work | approve | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -74,8 +74,32 @@ yet — so spawn the onboarder agent directly.)
    the developer verbatim; wait.
 4. Spawn **pipeline-context** (fresh, `phase: 2`, answers verbatim). It writes
    the context artifact + acceptance criteria and advances.
-5. Present its summary — especially the acceptance criteria — and ask for
-   approval (`/pipeline approve` protocol). STOP.
+5. Present its summary — especially the acceptance criteria — AND recommend an
+   autonomy mode (see below), then ask for approval (`/pipeline approve`
+   protocol). STOP.
+
+### Autonomy: recommend Fast fix vs Gated at the CONTEXT gate
+
+Two modes: **gated** (you approve every stage) and **express / "Fast fix"**
+(quality gates — plan, implement, test, review — auto-approve *once their
+validators pass*; you still approve the push at PR and any CI fix, and the
+deterministic lint/test/boundary checks still gate on red). Express trades the
+redundant human sign-off on machine-checked gates for speed; it never
+auto-pushes and never skips a validator.
+
+At the CONTEXT gate, judge the scope from what you learned and RECOMMEND:
+- Small/low-risk (a few files, no migrations/auth/security surface, no
+  `no_touch` neighbours, clear acceptance criteria) → recommend **Fast fix**.
+- Substantial/ambiguous/risky → recommend **Gated**.
+
+Present it as the developer's choice, e.g.:
+> This looks like a small change (≈1–2 files, no migrations). Approve as:
+> **Fast fix** — I run plan→review myself, you approve once at the PR; or
+> **Gated** — you review every step.
+
+To approve the CONTEXT gate WITH the mode: `pipeline approve --express` (Fast
+fix) or `pipeline approve` (stays gated). The developer's explicit choice is
+required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 
 ## `/pipeline work`  (also: `continue`, `go`)
 
@@ -96,6 +120,14 @@ yet — so spawn the onboarder agent directly.)
 3. Relay the executor's summary. GATE → approve protocol; ADVANCED/DONE →
    say what `/pipeline work` does next; BLOCKED after the agent's 3 rounds →
    show its blockers. STOP.
+
+**In express mode**, `advance` auto-approves the quality gates, so a single
+`/pipeline work` may flow through several stages until it reaches the PR gate
+(or a BLOCKED validator, or the run ends). Report each stage it passed through.
+**Reassess scope as you go**: if the plan turns out materially bigger or riskier
+than the "small fix" that justified Fast fix, STOP and recommend
+`pipeline set-autonomy gated` before continuing. Conversely, offer
+`set-autonomy express` if a gated run is proving trivial. The developer decides.
 
 ## `/pipeline onboard [path]`
 

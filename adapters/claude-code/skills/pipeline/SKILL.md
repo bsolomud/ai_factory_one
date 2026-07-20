@@ -32,6 +32,15 @@ Self-contained run context (you have NO other conversation context):
 - base branch: <base> · task input: <run_dir>/artifacts/00-ticket.md
 - phase/mode: <phase or mode, when applicable>
 - developer input (verbatim, when applicable): <their answers/decisions>
+- COMMAND HYGIENE: run shell commands PLAINLY — one command per call, exactly
+  as it would appear in a profile. NO echo prefixes, NO `2>&1 | tail`, NO
+  `${PIPESTATUS[...]}` / `$(...)` / backticks, NO subshells `( … )`, NO for/
+  while loops. Claude Code forces a permission prompt on ANY command
+  containing shell expansion or a subshell — even when an allow-rule matches —
+  so wrapping defeats pre-approval and prompts the developer every time. Need
+  the exit code? Just run the command; the tool result already reports it.
+  Need to hash several files? One call: `pipeline hash a b c --repo <slug>`,
+  never a loop.
 Return a summary ≤30 lines. Do not paste artifact contents.
 ```
 

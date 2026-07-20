@@ -81,7 +81,7 @@ export const validators = {
       }
     }
     if (reasons.length) return { ok: false, reasons }
-    if (ran === 0) return skip(`slot '${slot}': no command applied to this change (${skipped.join('; ') || 'no matching files'}) — recorded as UNVERIFIED`)
+    if (ran === 0) return skip(`slot '${slot}': not applicable to this change — the changed files map to no ${slot} target (${skipped.join('; ') || 'no matching files'}). Expected for config/view/spec-only changes; recorded as UNVERIFIED for the audit trail, not a coverage gap. Run a broader check yourself if the change warrants it.`)
     return ok()
   },
 

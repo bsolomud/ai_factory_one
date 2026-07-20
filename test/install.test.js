@@ -52,10 +52,18 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
   assert.ok(commands.some(c => c.endsWith('guard bash')), 'bash guard merged')
   assert.ok(commands.some(c => c.endsWith('guard write')), 'write guard merged')
 
-  // Idempotent: re-running must not duplicate hooks.
+  // Permissions pre-approved so /pipeline never prompts for its own CLI/home.
+  const allow = settings.permissions.allow
+  assert.ok(allow.includes('Bash(~/.ai_factory_one/bin/pipeline:*)'), 'pipeline CLI (~) allowed')
+  assert.ok(allow.some(r => r.startsWith(`Bash(${home}/bin/pipeline`)), 'pipeline CLI (abs) allowed')
+  assert.ok(allow.includes('Read(~/.ai_factory_one/**)'), 'pipeline home reads allowed')
+  assert.ok(settings.permissions.additionalDirectories.includes('~/.ai_factory_one'), 'home in additionalDirectories')
+
+  // Idempotent: re-running must not duplicate hooks OR permission rules.
   install({ AI_FACTORY_HOME: home, CLAUDE_HOME: claude })
   const again = JSON.parse(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'))
-  assert.equal(again.hooks.PreToolUse.length, settings.hooks.PreToolUse.length, 'no duplicates on re-run')
+  assert.equal(again.hooks.PreToolUse.length, settings.hooks.PreToolUse.length, 'no duplicate hooks on re-run')
+  assert.equal(again.permissions.allow.length, allow.length, 'no duplicate permission rules on re-run')
 
   // The installed executable answers status (NO_PROFILE for a fresh repo).
   const repoDir = path.join(root, 'fresh-repo')
@@ -79,6 +87,7 @@ test('uninstall.sh: reverses install, keeps user work by default, purges on --pu
   fs.mkdirSync(path.join(claude, 'agents'), { recursive: true })
   fs.writeFileSync(path.join(claude, 'settings.json'), JSON.stringify({
     model: 'opus',
+    permissions: { allow: ['Bash(git status:*)', 'Bash(echo:*)'] },
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-hook' }] }] }
   }))
   fs.writeFileSync(path.join(claude, 'agents/pipeline-custom-of-mine.md'), '# user-authored, not ours\n')
@@ -103,6 +112,13 @@ test('uninstall.sh: reverses install, keeps user work by default, purges on --pu
   const commands = (settings.hooks?.PreToolUse || []).flatMap(e => e.hooks.map(h => h.command))
   assert.ok(commands.includes('my-existing-hook'), 'user hook preserved')
   assert.ok(!commands.some(c => /guard (bash|write)$/.test(c)), 'our guard hooks removed')
+
+  // Our ai_factory_one permission rules removed; the user's own rules survive.
+  const allow = settings.permissions?.allow || []
+  assert.ok(!allow.some(r => /ai_factory_one/.test(r)), 'our permission rules removed')
+  assert.ok(allow.includes('Bash(git status:*)'), 'user permission rule preserved')
+  assert.ok(allow.includes('Bash(echo:*)'), "generic echo rule left alone (may be the user's)")
+  assert.ok(!settings.permissions?.additionalDirectories?.some(d => /ai_factory_one/.test(d)), 'our additionalDirectories removed')
 
   assert.ok(!fs.existsSync(path.join(home, 'bin')), 'framework bin removed')
   assert.ok(!fs.existsSync(path.join(home, 'pipeline.yml')), 'pipeline.yml removed')

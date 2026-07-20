@@ -12,6 +12,13 @@ function install(env) {
   })
 }
 
+function uninstall(env, ...args) {
+  return execFileSync('bash', [path.join(PACKAGE_ROOT, 'adapters/claude-code/uninstall.sh'), ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env }
+  })
+}
+
 test('install.sh: sandbox layout, hook merge, idempotence', () => {
   const { root } = sandbox()
   const home = path.join(root, 'pipeline-home')
@@ -60,4 +67,53 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
     env: { ...process.env, AI_FACTORY_HOME: home }
   })
   assert.equal(JSON.parse(out).verdict, 'NO_PROFILE')
+})
+
+test('uninstall.sh: reverses install, keeps user work by default, purges on --purge', () => {
+  const { root } = sandbox()
+  const home = path.join(root, 'pipeline-home')
+  const claude = path.join(root, 'claude-home')
+  const env = { AI_FACTORY_HOME: home, CLAUDE_HOME: claude }
+
+  // Pre-existing settings + a real (non-symlink) user agent that must survive.
+  fs.mkdirSync(path.join(claude, 'agents'), { recursive: true })
+  fs.writeFileSync(path.join(claude, 'settings.json'), JSON.stringify({
+    model: 'opus',
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-hook' }] }] }
+  }))
+  fs.writeFileSync(path.join(claude, 'agents/pipeline-custom-of-mine.md'), '# user-authored, not ours\n')
+
+  install(env)
+  // Simulate user work accumulated under repos/.
+  const workFile = path.join(home, 'repos', 'example.com-x', 'profile.yml')
+  fs.mkdirSync(path.dirname(workFile), { recursive: true })
+  fs.writeFileSync(workFile, 'commands: {}\n')
+
+  // --- default uninstall: framework gone, work + unrelated settings kept ---
+  uninstall(env)
+
+  assert.ok(!fs.existsSync(path.join(claude, 'skills/pipeline')), 'skill symlink removed')
+  for (const agent of ['onboarder', 'planner', 'stage-runner', 'reviewer']) {
+    assert.ok(!fs.existsSync(path.join(claude, `agents/pipeline-${agent}.md`)), `${agent} agent removed`)
+  }
+  assert.ok(fs.existsSync(path.join(claude, 'agents/pipeline-custom-of-mine.md')), 'user-authored agent (real file) preserved')
+
+  const settings = JSON.parse(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'))
+  assert.equal(settings.model, 'opus', 'unrelated settings preserved')
+  const commands = (settings.hooks?.PreToolUse || []).flatMap(e => e.hooks.map(h => h.command))
+  assert.ok(commands.includes('my-existing-hook'), 'user hook preserved')
+  assert.ok(!commands.some(c => /guard (bash|write)$/.test(c)), 'our guard hooks removed')
+
+  assert.ok(!fs.existsSync(path.join(home, 'bin')), 'framework bin removed')
+  assert.ok(!fs.existsSync(path.join(home, 'pipeline.yml')), 'pipeline.yml removed')
+  assert.ok(fs.existsSync(workFile), 'user work under repos/ preserved by default')
+
+  // --- reinstall then --purge: nothing left ---
+  install(env)
+  uninstall(env, '--purge')
+  assert.ok(!fs.existsSync(home), 'purge removes the entire pipeline home')
+
+  // Idempotent: uninstall again is a no-op, not an error.
+  uninstall(env)
+  uninstall(env, '--purge')
 })

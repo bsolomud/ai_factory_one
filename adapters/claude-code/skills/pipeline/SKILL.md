@@ -47,11 +47,13 @@ Return a summary ≤30 lines. Do not paste artifact contents.
 
 ## Spawning agents — cost guardrail
 
-Before you spawn ANY stage agent, run
-`pipeline agent-start <label> --repo <slug>`. It returns OK with the running
-tally, or BLOCKED if this run hit its agent ceiling (a runaway-loop backstop).
-On BLOCKED: stop, show the developer the tally, and ask before raising the
-limit. This is how the pilot keeps token cost bounded and measurable.
+Once a run exists (i.e. during `/pipeline work` stages), before you spawn a
+stage agent run `pipeline agent-start <label> --repo <slug>`. It returns OK
+with the running tally, or BLOCKED if this run hit its agent ceiling (a
+runaway-loop backstop). On BLOCKED: stop, show the developer the tally, and
+ask before raising the limit. This keeps the pilot's token cost bounded and
+measurable. (It does NOT apply during `/pipeline onboard` — there is no run
+yet — so spawn the onboarder agent directly.)
 
 ## `/pipeline start <ticket-id | link | plain text>`
 

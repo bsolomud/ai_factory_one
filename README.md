@@ -40,6 +40,20 @@ the `/pipeline` skill, the nine specialist agents (**onboarder, context,
 planner, architect, critic, implementer, qa, reviewer, stage-runner**), and
 the gate-guard hooks.
 
+### Uninstall
+
+```bash
+./install.sh --uninstall           # removes skill, agents, guard hooks, CLI —
+                                   # KEEPS your profiles/runs/knowledge
+./install.sh --uninstall --purge   # removes everything, including your work
+```
+
+Reverses the install exactly: unlinks the skill and `pipeline-*` agents,
+removes only *our* guard hooks from `settings.json` (your other hooks and
+settings are untouched), and deletes the framework files from
+`~/.ai_factory_one/`. By default your work under `~/.ai_factory_one/repos/`
+(profiles, runs, learned knowledge) is preserved; `--purge` deletes that too.
+
 **Context isolation by design**: your main session is only a dispatcher —
 your conversation never leaks into the agents, and their work never floods
 your context. Every stage runs in its own fresh agent that receives a small

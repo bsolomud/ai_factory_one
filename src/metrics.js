@@ -19,10 +19,10 @@ export function runMetrics(runDir, runId) {
   const stages = {}
   let currentStage = null
   let enteredAt = start
-  const ensure = name => (stages[name] ??= { blocked: 0, retries: 0, ms: 0, first_pass: null, reached_validate: false })
+  const ensure = name => (stages[name] ??= { blocked: 0, retries: 0, ms: 0, first_pass: null, reached_validate: false, entries: 0 })
 
   for (const e of events) {
-    if (e.event === 'run_created') { currentStage = firstStageFromEvents(events); enteredAt = at(e); if (currentStage) ensure(currentStage) }
+    if (e.event === 'run_created') { currentStage = firstStageFromEvents(events); enteredAt = at(e); if (currentStage) ensure(currentStage).entries += 1 }
     else if (e.event === 'blocked') { const s = ensure(e.stage); s.blocked += 1; s.retries += 1 }
     else if (e.event === 'validated') { const s = ensure(e.stage); s.reached_validate = true; if (s.first_pass === null) s.first_pass = s.blocked === 0 }
     else if (e.event === 'advanced') {
@@ -30,7 +30,16 @@ export function runMetrics(runDir, runId) {
       if (stages[e.from] && stages[e.from].first_pass === null) stages[e.from].first_pass = stages[e.from].blocked === 0
       currentStage = e.to
       enteredAt = at(e)
-      if (e.to && e.to !== 'DONE') ensure(e.to)
+      if (e.to && e.to !== 'DONE') ensure(e.to).entries += 1
+    }
+    // A reopen re-enters an earlier stage (rework). Count the extra entry so a
+    // stage that had to be redone is visible, and reset its first_pass judgment
+    // so the redo has to earn green again.
+    else if (e.event === 'reopened') {
+      if (e.from && stages[e.from] && enteredAt != null) stages[e.from].ms += Math.max(0, at(e) - enteredAt)
+      currentStage = e.to
+      enteredAt = at(e)
+      if (e.to) ensure(e.to).entries += 1
     }
   }
 
@@ -40,11 +49,16 @@ export function runMetrics(runDir, runId) {
 
   const spawns = events.filter(e => e.event === 'agent_spawned')
   const skips = events.filter(e => e.event === 'check_skipped')
-  // A skip is a genuine coverage gap only when the profile has NO command for the
-  // slot. "command exists but resolved to no matching files" (e.g. a config/view/
-  // spec-only subtask with no mirror spec) is expected bookkeeping, not a gap —
-  // separate them so a real UNVERIFIED isn't diluted (MB-46498 retro).
-  const noCommandSkips = skips.filter(e => /slot .* is empty|no .* command/i.test(e.reason || '')).length
+  // Classify skips so a real UNVERIFIED isn't diluted (MB-46498 retro):
+  //  - real coverage gap: a REQUIRED slot is empty, OR source changed with no
+  //    mirror spec ("possible coverage gap") — these should worry a pilot.
+  //  - not_configured: an OPTIONAL slot (e.g. post_change_hooks) isn't set —
+  //    quiet, not a gap.
+  //  - no_target: "command exists but resolved to no matching files" (config/
+  //    view/spec-only subtask) — expected bookkeeping.
+  const reasonOf = e => e.reason || ''
+  const notConfiguredSkips = skips.filter(e => /not configured/i.test(reasonOf(e))).length
+  const noCommandSkips = skips.filter(e => /slot .* is empty|no .* command|possible coverage gap/i.test(reasonOf(e))).length
 
   return {
     run: runId,
@@ -66,25 +80,42 @@ export function runMetrics(runDir, runId) {
     agents_by_label: tally(spawns.map(e => (e.label || 'agent').replace(/-?(r?\d+|st\d+)$/i, '') || 'agent')),
     checks_skipped: skips.length,
     checks_skipped_no_command: noCommandSkips,
-    checks_skipped_no_target: skips.length - noCommandSkips,
+    checks_skipped_not_configured: notConfiguredSkips,
+    checks_skipped_no_target: skips.length - noCommandSkips - notConfiguredSkips,
+    // Rework: how much the run had to backtrack. reopened events are explicit
+    // backward moves (e.g. a late fix at PR reopening IMPLEMENT); stage_reentries
+    // counts every entry into a stage beyond its first. High rework explains a
+    // high agent count on a nominally small change (MB-46498: a PR-gate reopen).
+    rework_cycles: events.filter(e => e.event === 'reopened').length,
+    stage_reentries: sum(Object.values(stages).map(s => Math.max(0, s.entries - 1))),
     feedback_notes: events.filter(e => e.event === 'feedback').length,
     seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)]))
   }
 }
 
+// Sample size below which the mean rates are anecdote, not trend. Kept low
+// because runs are expensive; three is enough to stop one lucky/unlucky run
+// from reading as a quality signal.
+const MIN_TREND_RUNS = 3
+
 export function aggregate(runsMetrics) {
   const finished = runsMetrics.length
   const withGates = runsMetrics.filter(m => m.gates_approved > 0)
   const fpRates = runsMetrics.map(m => m.first_pass_green_rate).filter(r => r != null)
+  const lowSample = finished < MIN_TREND_RUNS
   return {
     runs: finished,
+    low_sample: lowSample,
     mean_first_pass_green_rate: mean(fpRates),
     mean_gate_edit_rate: mean(withGates.map(m => m.gate_edit_rate).filter(r => r != null)),
     total_gate_edits: sum(runsMetrics.map(m => m.gate_edits)),
     total_blocked: sum(runsMetrics.map(m => m.blocked_total)),
     total_agents_spawned: sum(runsMetrics.map(m => m.agents_spawned)),
+    total_rework_cycles: sum(runsMetrics.map(m => m.rework_cycles || 0)),
     total_feedback_notes: sum(runsMetrics.map(m => m.feedback_notes)),
-    note: 'first_pass_green_rate and gate_edit_rate are the headline quality signals; low edit + high first-pass = the AI is producing trustworthy artifacts.'
+    note: lowSample
+      ? `only ${finished} finished run(s) — the mean rates below are anecdotal, NOT a trend; don't read a single run as a quality signal. Need ${MIN_TREND_RUNS}+ runs.`
+      : 'first_pass_green_rate and gate_edit_rate are the headline quality signals; low edit + high first-pass = the AI is producing trustworthy artifacts.'
   }
 }
 

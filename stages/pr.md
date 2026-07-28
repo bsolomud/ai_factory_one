@@ -22,7 +22,9 @@ Testing notes, Ops notes, Reviewer guidance.
 - **Reviewer guidance**: suggested reading order, riskiest hunks first.
 
 ## Done when
-Artifact complete; `pipeline advance`; the developer edits/approves the draft
+Fill the BLUF header at the top (Outcome, TL;DR, and a Needs-you that spells out
+the push approval + any ops action before merge). Artifact complete;
+`pipeline advance`; the developer edits/approves the draft
 text at the gate. **Only after that approval** push the branch and open the PR
 — as a DRAFT, ticket linked, never self-approved. (The guard physically blocks
 pushing before this gate is approved.) Then STOP.

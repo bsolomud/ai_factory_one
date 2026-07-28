@@ -4,8 +4,8 @@ import { test } from 'node:test'
 import YAML from 'yaml'
 import { validators, runValidators } from '../src/validators.js'
 import { newState } from '../src/state.js'
-import { globToRegex, substitute, targetedTests } from '../src/profile.js'
-import { completeArtifact, sandbox, standardRepo, writeFile } from './helpers.js'
+import { changedFiles, globToRegex, substitute, targetedTests } from '../src/profile.js'
+import { completeArtifact, makeRepo, sandbox, standardRepo, writeFile } from './helpers.js'
 
 const PROFILE = YAML.parse(`
 commands:
@@ -65,6 +65,27 @@ test('files_exist_in_repo: hallucinated path blocked, (new) exempt', () => {
   const result = validators.files_exist_in_repo(ctx, 'Affected files')
   assert.equal(result.ok, false)
   assert.equal(result.reasons.length, 1)
+  assert.match(result.reasons[0], /src\/ghost\.sh.*does not exist/)
+})
+
+test('files_exist_in_repo: TABLE-formatted Affected files parses (Step-2 shape)', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-repo-tbl')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  // The Affected files section is now a markdown table; the header row, the
+  // separator row, and the description/New? columns must NOT be read as paths,
+  // and (new) in a row still exempts that file from the existence check.
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files':
+      '| Path | Change | New? |\n' +
+      '|------|--------|------|\n' +
+      '| `src/app.sh` | edit the guard | |\n' +
+      '| `src/ghost.sh` | edit | |\n' +
+      '| `src/created.sh` | scaffolded | (new) |'
+  })
+  const result = validators.files_exist_in_repo(ctx, 'Affected files')
+  assert.equal(result.ok, false)
+  assert.equal(result.reasons.length, 1, 'only the hallucinated path is flagged; header/separator/(new) ignored')
   assert.match(result.reasons[0], /src\/ghost\.sh.*does not exist/)
 })
 
@@ -159,6 +180,105 @@ test('targetedTests maps changed src files to existing test files only', () => {
   assert.deepEqual(targetedTests(repo.dir, ['src/app.sh'], profile), ['tests/app_test.sh'])
   assert.deepEqual(targetedTests(repo.dir, ['src/util.sh'], profile), [], 'no test file → nothing (→ UNVERIFIED), never everything')
   assert.deepEqual(targetedTests(repo.dir, ['tests/app_test.sh'], profile), ['tests/app_test.sh'], 'changed test runs itself')
+})
+
+// --- P1a: changed-file scoping ---
+
+test('changedFiles: excludes ambient untracked by default; boundary opts in (MB-46745)', () => {
+  const { root } = sandbox()
+  const repo = makeRepo(root, 'cf-repo')
+  repo.write('a.txt', 'v1\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'init')
+  repo.write('a.txt', 'v2\n')          // tracked, modified
+  repo.write('scratch.md', 'notes\n')  // ambient untracked
+  assert.deepEqual(changedFiles(repo.dir, 'master'), ['a.txt'], 'untracked excluded by default')
+  assert.deepEqual(
+    changedFiles(repo.dir, 'master', { includeUntracked: true }).sort(),
+    ['a.txt', 'scratch.md'],
+    'boundary check opts into untracked'
+  )
+})
+
+test('profile_command: {changed_files} scoped to the command\'s when-glob (MB-46745)', () => {
+  const { root } = sandbox()
+  const repo = makeRepo(root, 'scope-repo')
+  // Fails if handed anything that is not a .rb path — proves .md is not passed.
+  repo.write('only_rb.sh', '#!/usr/bin/env bash\nfor f in "$@"; do [[ "$f" == *.rb ]] || { echo "got non-rb: $f"; exit 1; }; done\nexit 0\n')
+  repo.write('foo.rb', '# ruby\n')
+  repo.write('bar.md', 'markdown\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'init')
+  repo.write('foo.rb', '# ruby v2\n')
+  repo.write('bar.md', 'markdown v2\n')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = { commands: { lint_changed: [{ run: './only_rb.sh {changed_files}', when: '**/*.rb' }] } }
+  const result = validators.profile_command(ctx, 'lint_changed')
+  assert.equal(result.ok, true, 'rubocop-like command only received foo.rb, never bar.md')
+})
+
+// --- P1b: honest coverage-gap signal ---
+
+test('profile_command: source changed with no mirror spec → LOUD coverage-gap UNVERIFIED', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'gap-repo')
+  repo.write('src/util.sh', 'echo util-v2\n') // src/util.sh has NO tests/util_test.sh
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.skip, true)
+  assert.match(result.reason, /no mirror spec/i)
+  assert.match(result.reason, /src\/util\.sh/)
+  assert.match(result.reason, /coverage gap/i)
+})
+
+test('profile_command: config/non-source change → SOFT not-applicable skip (not a gap)', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'soft-repo')
+  repo.write('lint.sh', 'echo tweak\n')       // tracked, not under src/** → no spec expected
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.skip, true)
+  assert.match(result.reason, /not applicable/i)
+  assert.doesNotMatch(result.reason, /no mirror spec/i)
+  assert.match(result.reason, /not a coverage gap/i)
+})
+
+test('profile_command: opt-in test_fallback runs when targeted resolves empty but source changed', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'fallback-repo')
+  repo.write('src/util.sh', 'echo util-v2\n')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = {
+    commands: {
+      test_targeted: './run_tests.sh {targeted_specs}',
+      test_fallback: './run_tests.sh tests/app_test.sh'  // convention-safe, repo-defined
+    },
+    test_layout: { 'src/**': 'tests/' }
+  }
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.ok, true, 'fallback ran and passed instead of recording UNVERIFIED')
+})
+
+// --- P3: optional slots are "not configured", not a coverage gap ---
+
+test('profile_command: absent OPTIONAL slot → not_configured, not a coverage gap', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'opt-repo')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = { commands: { lint_changed: './lint.sh {changed_files}', test_targeted: './run_tests.sh {targeted_specs}' } }
+  const result = validators.profile_command(ctx, 'post_change_hooks')
+  assert.equal(result.skip, true)
+  assert.match(result.reason, /not configured/i)
+  assert.match(result.reason, /not a coverage gap/i)
+})
+
+test('profile_command: absent REQUIRED slot still reads as a real coverage gap', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'req-repo')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = { commands: {} }
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.skip, true)
+  assert.match(result.reason, /coverage gap/i)
+  assert.doesNotMatch(result.reason, /not configured/i)
 })
 
 test('globToRegex: **, * and !(x) segment negation', () => {

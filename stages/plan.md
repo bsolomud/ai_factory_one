@@ -1,7 +1,8 @@
 # Stage: PLAN
 
 Produce an implementation plan good enough that IMPLEMENT is mechanical. The
-plan's `## Affected files` becomes the enforced write boundary — be complete.
+plan's `## Affected files` (a table: Path | Change | New?) becomes the enforced
+write boundary — keep every path backticked, and be complete.
 
 **Execution model**: the dispatcher orchestrates three fresh-context
 specialists — **pipeline-planner** owns and writes the artifact
@@ -18,6 +19,18 @@ and the artifacts from disk; only findings summaries travel between them.
 ## Output
 `artifacts/02-plan.md`. Required sections: Approach, Affected files, Risks,
 Subtasks, Testing strategy, Open questions.
+
+## Decomposition rules (load-bearing — `advance` gates every subtask on green)
+A breaking change and the spec that adapts to it MUST be the **same subtask**.
+`advance` runs the targeted specs at every subtask gate, so a change and the
+test that certifies it have to land together — split them and the breaking
+subtask can never pass its own gate in isolation (MB-46745: a model change and
+its spec-rewrite were split, and the change subtask blocked repeatedly).
+- Never separate an API / model / signature / migration change from the specs it
+  breaks. If updating file X forces spec Y to change, X and Y are one subtask.
+- Each subtask must be independently green: it compiles, its specs pass, nothing
+  downstream is left red waiting for a later subtask.
+- Prefer fewer, self-certifying subtasks over many that only pass as a set.
 
 ## Procedure (choreography — the dispatcher drives the sequence)
 1. **Draft** (`pipeline-planner`, mode draft): write the full plan into
@@ -38,7 +51,8 @@ Subtasks, Testing strategy, Open questions.
    non-`(new)` affected file exists.
 
 ## Done when
-Critic clean (or escalated), sections complete, `status: complete` set LAST;
+Fill the BLUF header at the top (Decision, Files/Subtasks/Critic counts, TL;DR,
+Needs you). Critic clean (or escalated), sections complete, `status: complete` set LAST;
 run `pipeline advance`; present the plan summary (approach, subtasks, risks,
 open questions) — the developer approves with `! pipeline approve`, then
 `/pipeline work` starts the breakdown. STOP. The approved plan is FROZEN —

@@ -95,3 +95,74 @@ test('aggregate averages the headline rates across runs', () => {
   assert.equal(agg.total_gate_edits, 2)
   assert.equal(agg.total_agents_spawned, 10)
 })
+
+// --- P3: honest signal at small N ---
+
+test('aggregate flags low_sample and caveats the note below the trend threshold', () => {
+  const one = aggregate([{ first_pass_green_rate: 1, gate_edit_rate: 0, gates_approved: 3, gate_edits: 0, blocked_total: 0, agents_spawned: 4, feedback_notes: 1 }])
+  assert.equal(one.low_sample, true)
+  assert.match(one.note, /anecdotal|NOT a trend/i)
+
+  const many = aggregate(Array.from({ length: 3 }, () => ({ first_pass_green_rate: 1, gate_edit_rate: 0, gates_approved: 1, gate_edits: 0, blocked_total: 0, agents_spawned: 1, feedback_notes: 0 })))
+  assert.equal(many.low_sample, false)
+  assert.doesNotMatch(many.note, /anecdotal/i)
+})
+
+// --- P3: optional-slot skip bucket ---
+
+test('checks_skipped: optional not-configured slot is its own bucket, not a coverage gap', () => {
+  const { root } = sandbox()
+  const runDir = eventsRun(root, [
+    { event: 'run_created', run: 'R', base: 'master' },
+    { event: 'check_skipped', stage: 'IMPLEMENT', reason: "optional slot 'post_change_hooks' is not configured for this repo — not applicable, recorded as UNVERIFIED (not a coverage gap)" },
+    { event: 'check_skipped', stage: 'TEST', reason: "profile slot 'lint_changed' is empty for this repo — recorded as UNVERIFIED (a real coverage gap)" }
+  ])
+  const m = runMetrics(runDir, 'R')
+  assert.equal(m.checks_skipped, 2)
+  assert.equal(m.checks_skipped_no_command, 1, 'the empty required slot is a real gap')
+  assert.equal(m.checks_skipped_not_configured, 1, 'the optional slot is quietly not-configured')
+  assert.equal(m.checks_skipped_no_target, 0)
+})
+
+test('checks_skipped: a source-with-no-spec skip counts as a real coverage gap', () => {
+  const { root } = sandbox()
+  const runDir = eventsRun(root, [
+    { event: 'run_created', run: 'R', base: 'master' },
+    { event: 'check_skipped', stage: 'IMPLEMENT', reason: "slot 'test_targeted': source files changed with NO mirror spec: src/util.rb — add a spec; recorded as UNVERIFIED (possible coverage gap)" }
+  ])
+  const m = runMetrics(runDir, 'R')
+  assert.equal(m.checks_skipped_no_command, 1, 'a missing-spec gap is not benign bookkeeping')
+})
+
+// --- P4: rework signal ---
+
+test('rework_cycles and stage_reentries surface backtracking (reopened events)', () => {
+  const { root } = sandbox()
+  const runDir = eventsRun(root, [
+    { event: 'run_created', run: 'R', base: 'master' },
+    { event: 'validated', stage: 'CONTEXT' },
+    { event: 'advanced', from: 'CONTEXT', to: 'PLAN' },
+    { event: 'validated', stage: 'PLAN' },
+    { event: 'advanced', from: 'PLAN', to: 'IMPLEMENT' },
+    { event: 'advanced', from: 'IMPLEMENT', to: 'PR' },
+    // late fix at PR reopens IMPLEMENT, then re-advances back through to PR
+    { event: 'reopened', from: 'PR', to: 'IMPLEMENT' },
+    { event: 'advanced', from: 'IMPLEMENT', to: 'PR' }
+  ])
+  const m = runMetrics(runDir, 'R')
+  assert.equal(m.rework_cycles, 1, 'one reopen')
+  assert.equal(m.stage_reentries, 2, 'IMPLEMENT entered twice and PR entered twice → 2 extra entries')
+})
+
+test('a clean run has zero rework', () => {
+  const { root } = sandbox()
+  const runDir = eventsRun(root, [
+    { event: 'run_created', run: 'R', base: 'master' },
+    { event: 'validated', stage: 'CONTEXT' },
+    { event: 'advanced', from: 'CONTEXT', to: 'PLAN' },
+    { event: 'advanced', from: 'PLAN', to: 'DONE' }
+  ])
+  const m = runMetrics(runDir, 'R')
+  assert.equal(m.rework_cycles, 0)
+  assert.equal(m.stage_reentries, 0)
+})

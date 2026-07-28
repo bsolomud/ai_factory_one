@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke for any /pipeline command or when resuming pipeline work.
+description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
 argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
@@ -69,7 +69,10 @@ yet — so spawn the onboarder agent directly.)
 1. `pipeline status`. NO_PROFILE → run the `/pipeline onboard` flow below
    first. PROFILE_STALE → onboard flow (re-sync). Matching ACTIVE_RUN → `work`.
 2. Run id: ticket id if present, else a short kebab slug. `pipeline new-run
-   <id>`; write the developer's raw input to `<run_dir>/artifacts/00-ticket.md`.
+   <id>`; write the developer's raw input to `<run_dir>/artifacts/00-ticket.md`,
+   prefixed with a short BLUF header above the raw body — a blockquote with
+   **source** (ticket id / link / "pasted text"), any **ids** (e.g. Airbrake,
+   occurrences), and a one-line **ask** — so the intake is legible at a glance.
 3. Spawn **pipeline-context** (handoff, `phase: 1`). Relay its questions to
    the developer verbatim; wait.
 4. Spawn **pipeline-context** (fresh, `phase: 2`, answers verbatim). It writes

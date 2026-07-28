@@ -68,6 +68,28 @@ test('feedback + abort + show, and metrics reflect them', () => {
   assert.equal(run(['status']).verdict, 'NO_ACTIVE_RUN', 'aborted run drops out of active')
 })
 
+test('metrics --all: org-wide rollup across every known repo, no repo context needed', () => {
+  const { root, home } = sandbox()
+  const repoA = standardRepo(root, 'org-a')
+  const repoB = standardRepo(root, 'org-b')
+  installProfile(home, 'example.com-test-org-a', STANDARD_PROFILE)
+  installProfile(home, 'example.com-test-org-b', STANDARD_PROFILE)
+  cli(['new-run', 'A-1'], { home, cwd: repoA.dir })
+  cli(['new-run', 'B-1'], { home, cwd: repoB.dir })
+  cli(['new-run', 'B-2'], { home, cwd: repoB.dir })
+
+  // Run from a non-repo cwd — --all must not require a repo.
+  const all = cli(['metrics', '--all'], { home, cwd: root })
+  assert.equal(all.verdict, 'OK')
+  assert.equal(all.scope, 'all_repos')
+  assert.equal(all.repos.length, 2, 'both onboarded repos present')
+  const byRepo = Object.fromEntries(all.repos.map(r => [r.repo, r.runs]))
+  assert.equal(byRepo['example.com-test-org-a'], 1)
+  assert.equal(byRepo['example.com-test-org-b'], 2)
+  assert.equal(all.org.runs, 3, 'org rollup aggregates every run')
+  assert.equal(all.org.low_sample, false, '3 runs meets the trend threshold')
+})
+
 test('reopen: backward-only, drops later gates, resets downstream artifacts to draft', () => {
   const { root, home } = sandbox()
   const repo = standardRepo(root, 'reopen-repo')

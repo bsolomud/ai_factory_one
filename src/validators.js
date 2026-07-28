@@ -2,7 +2,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseArtifact, sections, pathsInSection } from './artifacts.js'
-import { changedFiles, matchesAny, resolveSlot, substitute, targetedTests } from './profile.js'
+import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests } from './profile.js'
 
 // Every validator: (ctx, param) → {ok:true} | {ok:false, reasons:[...]} | {skip:true, reason}.
 // Failure strings are instructions a model can act on — they land in Claude's
@@ -60,7 +60,9 @@ export const validators = {
   profile_command(ctx, slot) {
     const entries = resolveSlot(ctx.profile, slot)
     if (entries.length === 0) {
-      return skip(`profile slot '${slot}' is empty for this repo — check skipped, recorded as UNVERIFIED`)
+      return REQUIRED_SLOTS.includes(slot)
+        ? skip(`profile slot '${slot}' is empty for this repo — check skipped, recorded as UNVERIFIED (a real coverage gap; add the command via '/pipeline onboard')`)
+        : skip(`optional slot '${slot}' is not configured for this repo — not applicable, recorded as UNVERIFIED (not a coverage gap)`)
     }
     const base = ctx.state?.git?.base || 'master'
     const files = changedFiles(ctx.repoDir, base)
@@ -70,7 +72,12 @@ export const validators = {
     let ran = 0
     for (const entry of entries) {
       if (entry.when && !files.some(f => matchesAny(f, [entry.when]))) continue
-      const resolved = substitute(entry.run, { files, tests })
+      // Scope {changed_files} to the files this command's `when` glob actually
+      // matches, so e.g. `rubocop {changed_files}` (when **/*.rb) never receives
+      // a .md/.json path from a mixed changeset (MB-46745). Tests stay global —
+      // targetedTests already resolved them from the whole change.
+      const scoped = entry.when ? files.filter(f => matchesAny(f, [entry.when])) : files
+      const resolved = substitute(entry.run, { files: scoped, tests })
       if (resolved.skip) { skipped.push(`'${entry.run}' skipped: ${resolved.skip}`); continue }
       try {
         execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000 })
@@ -81,7 +88,34 @@ export const validators = {
       }
     }
     if (reasons.length) return { ok: false, reasons }
-    if (ran === 0) return skip(`slot '${slot}': not applicable to this change — the changed files map to no ${slot} target (${skipped.join('; ') || 'no matching files'}). Expected for config/view/spec-only changes; recorded as UNVERIFIED for the audit trail, not a coverage gap. Run a broader check yourself if the change warrants it.`)
+    if (ran === 0) {
+      // Nothing ran. Distinguish a genuine coverage gap (source changed but has
+      // no mirror spec) from expected bookkeeping (config/view/spec-only change).
+      const needsSpecs = slot === 'test_targeted' ? sourceFilesNeedingSpecs(ctx.repoDir, files, ctx.profile) : []
+      if (needsSpecs.length) {
+        // Convention-safe escape hatch: if (and only if) the repo opted into an
+        // explicit test_fallback command, run THAT — never a hardcoded full suite
+        // (repo profiles forbid full-suite runs). Otherwise flag loudly.
+        const fallback = resolveSlot(ctx.profile, 'test_fallback')
+        if (fallback.length) {
+          for (const entry of fallback) {
+            const resolved = substitute(entry.run, { files, tests })
+            if (resolved.skip) continue
+            try {
+              execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000 })
+              ran++
+            } catch (e) {
+              const tail = lastLines(`${e.stdout ?? ''}\n${e.stderr ?? ''}`, 50)
+              reasons.push(`test_fallback failed (exit ${e.status ?? '?'}): ${resolved.cmd}\n${tail}\nFix the failures, then run 'pipeline advance' again`)
+            }
+          }
+          if (reasons.length) return { ok: false, reasons }
+          if (ran > 0) return ok()
+        }
+        return skip(`slot '${slot}': source files changed with NO mirror spec: ${needsSpecs.join(', ')} — add a spec (preferred) or verify manually; recorded as UNVERIFIED (possible coverage gap). Define commands.test_fallback in the profile to auto-cover this case.`)
+      }
+      return skip(`slot '${slot}': not applicable to this change — the changed files map to no ${slot} target (${skipped.join('; ') || 'no matching files'}). Expected for config/view/spec-only changes; recorded as UNVERIFIED for the audit trail, not a coverage gap. Run a broader check yourself if the change warrants it.`)
+    }
     return ok()
   },
 
@@ -92,7 +126,9 @@ export const validators = {
     const affected = pathsInSection(sections(artifact.body)['Affected files'] ?? '').map(p => p.path)
     if (affected.length === 0) return fail(`the plan's '## Affected files' section lists no paths — the write boundary cannot be derived`)
     const base = ctx.state?.git?.base || 'master'
-    const files = changedFiles(ctx.repoDir, base)
+    // Boundary enforcement DOES want untracked files: a run's brand-new file that
+    // isn't committed yet is still an out-of-plan write we must catch.
+    const files = changedFiles(ctx.repoDir, base, { includeUntracked: true })
     const allowedTests = targetedTests(ctx.repoDir, affected, ctx.profile)
     const noTouch = ctx.profile?.no_touch || []
     const testDirs = Object.values(ctx.profile?.test_layout || {})

@@ -13,10 +13,11 @@ case "${1:-}" in
       echo "→ installing dependencies"
       (cd "$HERE" && npm install --no-audit --no-fund --silent)
     fi
-    if [ ! -f "$HERE/dist/pipeline" ]; then
-      echo "→ building self-contained executables"
-      (cd "$HERE" && npm run build --silent)
-    fi
+    # Always rebuild — this is the update path too (re-run after `git pull`).
+    # A cached dist/ from a previous install must never shadow pulled source,
+    # or the CLI silently ships stale code. Build is fast and deterministic.
+    echo "→ building self-contained executables"
+    (cd "$HERE" && npm run build --silent)
     exec bash "$HERE/adapters/claude-code/install.sh"
     ;;
   --uninstall)

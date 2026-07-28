@@ -245,6 +245,22 @@ const commands = {
   },
 
   metrics(_, flags) {
+    // Org-wide rollup: every known repo, no repo context needed. Runs from any
+    // folder — the single command a pilot uses to see the whole pipeline.
+    if (flags.all) {
+      const repos = paths.knownRepos().filter(r => r.has_profile)
+      const perRepo = repos.map(r => {
+        const runs = listRuns(r.slug).map(x => runMetrics(paths.runDir(r.slug, x.id), x.id))
+        return { repo: r.slug, runs, summary: aggregate(runs) }
+      })
+      const allRuns = perRepo.flatMap(r => r.runs)
+      return emit({
+        verdict: 'OK',
+        scope: 'all_repos',
+        repos: perRepo.map(({ repo, runs, summary }) => ({ repo, runs: runs.length, summary })),
+        org: aggregate(allRuns)
+      })
+    }
     const ctx = resolveRepo(flags, { requireProfile: true })
     if (flags.run) {
       return emit({ verdict: 'OK', ...runMetrics(paths.runDir(ctx.slug, flags.run), flags.run) })
@@ -521,8 +537,8 @@ function scaffoldArtifacts(runDir, config, runId) {
     const template = paths.asset('templates', templateName)
     if (!fs.existsSync(template)) continue
     const content = fs.readFileSync(template, 'utf8')
-      .replace('__RUN__', runId)
-      .replace('__STAGE__', stageName)
+      .replaceAll('__RUN__', runId)
+      .replaceAll('__STAGE__', stageName)
     fs.writeFileSync(path.join(runDir, def.output), content)
   }
 }

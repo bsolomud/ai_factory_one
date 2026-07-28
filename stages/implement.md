@@ -25,7 +25,8 @@ starting over.
   relevant to this change. The developer must never see red.
 
 ## Done when
-The subtask is committed and `03-progress.md` updated; run `pipeline advance`
+The subtask is committed and `03-progress.md` updated (keep the BLUF header's
+subtask count current); run `pipeline advance`
 (it re-runs the profile checks and the write-boundary check — its exit code is
 the certification, not your claim). On GATE: present the diff to the developer
 with a short rationale per change, then STOP. Approval moves the cursor to the

@@ -26,7 +26,14 @@ Disputed, Plan-vs-shipped check.
   arbitrates at the gate.
 - **Plan-vs-shipped check**: does the final shape still match the approved
   plan + amendments? Each drift becomes an amendment or an explicit decision.
+- **Re-review (reopen / round 2+)**: before writing this round, move the prior
+  round's content into `## History` wrapped in a collapsed `<details>` block
+  (append-only — never rewrite or delete an archived round), then refresh the
+  header + the sections above to reflect THIS round only. One always-fresh view
+  at the top; the audit trail lives in History.
 
 ## Done when
-Artifact complete, fixes committed, checks green via `pipeline advance`;
+Fill the BLUF header at the top (Outcome APPROVE/CHANGES, Blocking count, TL;DR,
+Needs you) reflecting the latest round. Artifact complete, fixes committed,
+checks green via `pipeline advance`;
 present findings summary and STOP.

@@ -24,7 +24,13 @@ sections: Runs analyzed, Classification, Fixes, Outcome.
   reproduction script) instead of pushing a third guess.
 - Every proposed fix goes to the developer at the gate BEFORE it is applied
   and pushed.
+- **On a reopen / re-run that redoes the analysis**: archive the prior round's
+  Classification / Fixes / Outcome into `## History` under a collapsed
+  `<details>` block, and keep the sections above reflecting the CURRENT round.
+  (Per-run rows still accumulate in `## Runs analyzed` — History is for
+  superseded whole-round analyses, not individual runs.)
 
 ## Done when
 CI green and the developer has merged (merging is a human act — never merge).
-Update `## Outcome`, set `status: complete`, `pipeline advance`, STOP.
+Update `## Outcome` and the BLUF header (reflecting the latest run), set
+`status: complete`, `pipeline advance`, STOP.

@@ -6,6 +6,16 @@ status: draft
 
 # PR Draft — __RUN__
 
+<!-- BLUF header: a human-facing summary above the first ## section. Not validated.
+     This gate needs a human (the push is irreversible) — surface the ask clearly. -->
+> **PR · __RUN__** — <!-- OUTCOME, e.g. "ready to push · 10 commits" -->
+>
+> **Commits** <!-- n --> · **Gate** human push required
+>
+> **TL;DR** — <!-- 1–2 sentences: what this PR does. -->
+>
+> **Needs you** — <!-- the push approval + any ops action (e.g. set an env var) before merge. -->
+
 ## Title
 <!-- Per the profile's PR title convention. -->
 

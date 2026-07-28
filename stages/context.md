@@ -25,15 +25,17 @@ Requirements, Acceptance criteria, Findings, Open questions.
   (path). Mark each claim curated-doc-backed vs inferred.
 - **Ask the developer** everything needed to plan confidently: ambiguities,
   constraints, scope edges, and what "done" looks like. One batch, in chat.
-- From their answers, write `## Acceptance criteria`: numbered, each
-  independently checkable — these drive the plan's testing strategy and QA's
-  audit later.
+- From their answers, write `## Acceptance criteria` as a table
+  (# | Criterion | Verified by): numbered, each independently checkable —
+  these drive the plan's testing strategy and QA's audit later.
 - Questions they could not answer now: record under `## Open questions`,
   split **Blocking** vs **Non-blocking** (state the assumption you proceed with).
 - Do not design a solution here — that is PLAN's job.
 
 ## Done when
-All sections filled, citations included; set `status: complete` in the
+Fill the BLUF header at the top (Outcome, TL;DR, Needs you) — it's what the
+developer and the next stage read first. All sections filled, citations
+included; set `status: complete` in the
 frontmatter as your LAST edit; run `pipeline advance`. On GATE, tell the
 developer to review (they approve with `! pipeline approve`, then run
 `/pipeline work` to build the plan) and STOP.

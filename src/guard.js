@@ -19,7 +19,38 @@ import * as paths from './paths.js'
 const WRITE_STAGES = ['IMPLEMENT', 'TEST', 'REVIEW', 'CI', 'SCRIBE']
 const COMMIT_STAGES = ['IMPLEMENT', 'TEST', 'REVIEW', 'CI']
 
+// Pipeline enforcement is OPT-IN PER SESSION. It applies only after the
+// developer runs a `/pipeline` command in this session (UserPromptSubmit →
+// `guard mark`), and is cleared when the session ends (SessionEnd →
+// `guard unmark`). Without this, a leftover active run would hijack every
+// unrelated session in the same repo — the developer must never be forced into
+// pipeline mode without asking for it. The TTL is only a leak guard for when
+// SessionEnd doesn't fire; active `/pipeline` use refreshes the marker.
+const MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+function markerPath(sessionId) {
+  // Sanitize: session ids are host-generated, but never build a path from an
+  // id containing separators or traversal.
+  if (!sessionId || typeof sessionId !== 'string' || /[^\w.-]/.test(sessionId)) return null
+  return path.join(paths.home(), 'active-sessions', sessionId)
+}
+
+function sessionEngaged(sessionId) {
+  const p = markerPath(sessionId)
+  if (!p) return false
+  try {
+    const st = fs.statSync(p) // throws if absent → not engaged
+    if (Date.now() - st.mtimeMs > MARKER_TTL_MS) { fs.rmSync(p, { force: true }); return false }
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function guard(mode, input) {
+  // Session bookkeeping modes run regardless of repo/run state.
+  if (mode === 'mark') return markSession(input)
+  if (mode === 'unmark') return unmarkSession(input)
   try {
     const cwd = input.cwd || process.cwd()
     const repoDir = paths.gitRoot(cwd)
@@ -29,12 +60,34 @@ export function guard(mode, input) {
     if (!profile) return allow() // not a pipeline-onboarded repo
     const run = activeRun(slug)
     if (!run) return allow() // no run in flight — normal Claude usage
+    // The decisive gate: enforce ONLY if this session engaged the pipeline.
+    if (!sessionEngaged(input.session_id)) return allow()
     if (mode === 'bash') return guardBash(input.tool_input?.command || '', run)
     if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, cwd })
     return allow()
   } catch {
     return allow() // fail open, always
   }
+}
+
+// UserPromptSubmit hook: a prompt containing a `/pipeline` command engages the
+// pipeline for this session. Anything else leaves the session untouched.
+function markSession(input) {
+  try {
+    if (!/\/pipeline\b/.test(input.prompt || '')) return allow()
+    const p = markerPath(input.session_id)
+    if (p) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${new Date().toISOString()}\n`) }
+  } catch { /* fail open — never break prompt submission */ }
+  return allow()
+}
+
+// SessionEnd hook: drop the marker so enforcement never outlives the session.
+function unmarkSession(input) {
+  try {
+    const p = markerPath(input.session_id)
+    if (p) fs.rmSync(p, { force: true })
+  } catch { /* best effort; TTL is the backstop */ }
+  return allow()
 }
 
 function guardBash(command, { state }) {

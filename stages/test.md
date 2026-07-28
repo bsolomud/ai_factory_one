@@ -14,13 +14,14 @@ gets a test or an explicit, written reason it doesn't.
 Risk-to-test map, Added tests, Deferred.
 
 ## Procedure (executed by `pipeline-qa`, fresh context)
-- Audit coverage against the branch diff; build the risk-to-test map (every
-  plan risk AND every acceptance criterion → a named test or `not tested
+- Audit coverage against the branch diff; build the risk-to-test map as a table
+  (every plan risk AND every acceptance criterion → a named test or `not tested
   because <reason>`); write the justified missing tests in the repo's own
   style; screen them for flakiness; only green work is presented.
 - Write the results into `04-test-report.md`; deferred edge cases go under
   `## Deferred` — the developer sees them at the gate; recorded, not dropped.
 
 ## Done when
-Report complete (`status: complete` LAST), tests green; `pipeline advance`;
+Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Report complete
+(`status: complete` LAST), tests green; `pipeline advance`;
 present the report and STOP.

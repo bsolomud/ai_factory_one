@@ -13,8 +13,9 @@ skipped checks).
 - **Plan-vs-shipped**: diff the approved plan (with amendments) against what
   shipped. Substantive deviations = planner/critic improvement candidates or
   missing knowledge facts.
-- **Learnings**: harvest gotchas — developer corrections at gates, recurring
-  critic findings, CI failure patterns, UNVERIFIED checks that mattered.
+- **Learnings** (as a table: Learning | Type | Routed to | Status): harvest
+  gotchas — developer corrections at gates, recurring critic findings, CI
+  failure patterns, UNVERIFIED checks that mattered.
 - **Routing** — each learning goes to exactly one place:
   - **Repo with curated docs** → draft the doc diff and present it to the
     developer. THIS IS THE ONLY CASE where the pipeline may touch repo files
@@ -24,5 +25,6 @@ skipped checks).
   - **Pipeline-generic** → note it as a framework improvement proposal.
 
 ## Done when
-Artifact complete; `pipeline advance` (auto-approvable gate); report the
+Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Artifact complete;
+`pipeline advance` (auto-approvable gate); report the
 routed learnings and STOP. The run is DONE.

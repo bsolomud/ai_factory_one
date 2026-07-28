@@ -59,6 +59,20 @@ for (const { matcher, cmd } of wanted) {
   if (!present) settings.hooks.PreToolUse.push({ matcher, hooks: [{ type: 'command', command: cmd }] })
 }
 
+// Session-scoped engagement: a `/pipeline` prompt MARKS the session; session end
+// UNMARKS it. The PreToolUse guard only enforces for marked sessions, so a
+// leftover active run never forces pipeline behavior on a session that never
+// ran /pipeline. Matcher-less events — merged and deduped like the above.
+const eventHooks = [
+  { event: 'UserPromptSubmit', cmd: `${guardBin} mark` },
+  { event: 'SessionEnd', cmd: `${guardBin} unmark` }
+]
+for (const { event, cmd } of eventHooks) {
+  settings.hooks[event] ??= []
+  const present = settings.hooks[event].some(entry => (entry.hooks || []).some(h => h.command === cmd))
+  if (!present) settings.hooks[event].push({ hooks: [{ type: 'command', command: cmd }] })
+}
+
 // Pre-approve the pipeline's own CLI + reading its home, so /pipeline never
 // prompts for its own machinery. Absolute (as invoked by hooks) + ~ form (as
 // the SKILL invokes it). Merged, deduped — user's own rules are untouched.

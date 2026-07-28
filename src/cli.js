@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
-import { loadProfile, validateProfile } from './profile.js'
+import { loadProfile, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { parseArtifact } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -155,7 +155,11 @@ const commands = {
     fs.mkdirSync(path.join(runDir, 'artifacts'), { recursive: true })
     scaffoldArtifacts(runDir, config, runId)
     const base = ctx.profile?.conventions?.base_branch || 'master'
-    const state = newState({ runId, repo: ctx.slug, stage: config.first, base })
+    // Snapshot the developer's pre-existing untracked files NOW, before the pipeline
+    // writes anything, so the write-boundary check ignores their ambient scratch and
+    // only flags untracked files the run itself creates outside the plan.
+    const baselineUntracked = untrackedFiles(ctx.repoDir)
+    const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked })
     if (flags.autonomy) {
       if (!AUTONOMY_MODES.includes(flags.autonomy)) {
         return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (${AUTONOMY_MODES.join(' | ')})` }, 1)
@@ -163,7 +167,7 @@ const commands = {
       state.autonomy = flags.autonomy
     }
     writeState(runDir, state)
-    appendEvent(runDir, { event: 'run_created', run: runId, base })
+    appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked.length })
     return emit({
       verdict: 'CREATED',
       run: runId,

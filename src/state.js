@@ -6,7 +6,7 @@ export class StateError extends Error {}
 const REQUIRED_KEYS = ['schema_version', 'run_id', 'repo', 'stage', 'stage_status', 'substate', 'gates']
 const STAGE_STATUSES = ['in_progress', 'awaiting_gate', 'complete']
 
-export function newState({ runId, repo, stage, base, branch }) {
+export function newState({ runId, repo, stage, base, branch, baselineUntracked }) {
   return {
     schema_version: 1,
     run_id:         runId,
@@ -16,7 +16,7 @@ export function newState({ runId, repo, stage, base, branch }) {
     substate:       { critic_round: 0, subtask: null, of: null },
     autonomy:       'gated',
     gates:          [],
-    git:            { branch: branch || null, base: base || 'master', last_sha: null },
+    git:            { branch: branch || null, base: base || 'master', last_sha: null, baseline_untracked: baselineUntracked || [] },
     session_ids:    {},
     unverified:     []
   }

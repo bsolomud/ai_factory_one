@@ -19,9 +19,26 @@ drop a previous answer.
 
 ### 1. Analyze how to work with the repo
 From manifests and configs, propose the repo's lint / targeted-test / hook
-commands with the evidence file for each. **Verify by execution**: run each
-proposed command ONCE (scoped to a small target). A command that does not run
-never enters the profile.
+commands with the evidence file for each. **Verify each with the cheapest
+check that still proves it resolves** — never a full analysis run on real
+files (that toolchain boot, not the single file, is what makes onboarding
+slow):
+
+- **Linters / formatters** — a config-parse check: invoke the tool in a mode
+  that loads the repo's config but analyzes nothing (e.g. "list target files"
+  or "print resolved config"). Catches a missing tool, an unresolvable runner,
+  AND a broken lint config. Record `verified: config`.
+- **Test runners** — a version/liveness flag, which skips the expensive
+  app/framework boot. Proves the tool is installed and the runner resolves, but
+  NOT that test-time config loads. Record `verified: liveness`.
+- **Hooks / other** — a version or help flag (liveness). Record
+  `verified: liveness`.
+
+A check that fails means the command does not enter the profile. If the
+developer wants full certainty for a specific command, run it once for real
+scoped to one file and record `verified: executed`. The `verified:` tier is
+stored on each command (step 4) so the profile stays honest about what was
+actually proven — liveness is not the same guarantee as a real run.
 
 ### 2. Skill binding — the core question
 For each pipeline capability that has built-in behavior — **plan, review,
@@ -50,10 +67,11 @@ Base branch, branch/PR naming, canonical command when several exist,
 here.
 
 ### 4. Write the profile
-`profile.yml` at `profile_path`, with: `commands` slots (empty slot =
-recorded honestly, checks become UNVERIFIED), `test_layout`, `conventions`,
-`no_touch`, `bindings` (mode + per-capability source/path/sha), and
-`evidence_hashes` for the files detection relied on (`pipeline hash` again).
+`profile.yml` at `profile_path`, with: `commands` slots (each command entry
+carries a `verified:` tier — `config` | `liveness` | `executed` — from step 1;
+an empty slot = recorded honestly, checks become UNVERIFIED), `test_layout`,
+`conventions`, `no_touch`, `bindings` (mode + per-capability source/path/sha),
+and `evidence_hashes` for the files detection relied on (`pipeline hash` again).
 
 ### 5. Confirm
 Show the developer the full profile and wait for explicit confirmation —

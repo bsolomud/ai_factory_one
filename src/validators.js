@@ -132,8 +132,15 @@ export const validators = {
     const allowedTests = targetedTests(ctx.repoDir, affected, ctx.profile)
     const noTouch = ctx.profile?.no_touch || []
     const testDirs = Object.values(ctx.profile?.test_layout || {})
+    // Files that were already sitting untracked when the run started (snapshotted in
+    // new-run). They are the developer's ambient scratch — the pipeline did not create
+    // them, so they must never block the boundary gate (they also can't be checked for
+    // no_touch: an untracked file has no diff to inspect). Only untracked files that
+    // appeared DURING the run are the pipeline's responsibility.
+    const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
     const reasons = []
     for (const file of files) {
+      if (ambient.has(file)) continue
       if (matchesAny(file, noTouch)) {
         reasons.push(`working tree touches ${file}, which matches a no_touch rule in the repo profile — revert this change; the pipeline must never modify it`)
         continue

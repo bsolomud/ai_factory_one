@@ -127,6 +127,27 @@ test('git_clean_within: out-of-plan file and no_touch violation both block', () 
   assert.ok(!result.reasons.some(r => r.includes('src/app.sh')), 'planned file is allowed')
 })
 
+test('git_clean_within: ambient untracked files snapshotted at run start never block', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-repo4b')
+  // scratch.md was already untracked before the run — capture it as the baseline.
+  repo.write('scratch.md', 'my notes\n')
+  const state = newState({
+    runId: 'T-1', repo: 'r', stage: 'IMPLEMENT',
+    baselineUntracked: ['scratch.md']
+  })
+  const ctx = ctxFor({ root, repoDir: repo.dir, state })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files': '- `src/app.sh`'
+  })
+  repo.write('src/app.sh', 'echo changed\n')     // planned
+  repo.write('src/rogue.sh', 'echo rogue\n')     // NEW untracked during the run → still caught
+  const result = validators.git_clean_within(ctx)
+  assert.equal(result.ok, false)
+  assert.ok(!result.reasons.some(r => r.includes('scratch.md')), 'pre-existing untracked file is ignored')
+  assert.match(result.reasons.find(r => r.includes('rogue')), /outside the approved plan/)
+})
+
 test('min_commits_per_subtask: counts branch commits against the cursor', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'v-repo5')

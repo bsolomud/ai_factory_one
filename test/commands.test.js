@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
-import { cli, completeArtifact, installProfile, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
+import { cli, completeArtifact, installProfile, readState, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
 
 test('validateProfile: catches structural errors, warns on soft gaps', () => {
   assert.deepEqual(validateProfile(null).errors.length > 0, true)
@@ -136,4 +136,34 @@ test('reopen: backward-only, drops later gates, resets downstream artifacts to d
   // Forward via reopen is rejected; advance is the forward path.
   assert.equal(run(['reopen', 'PR']).verdict, 'ERROR')
   assert.equal(run(['reopen', 'NONSENSE']).verdict, 'ERROR')
+})
+
+test('new-run snapshots pre-existing untracked files as the ambient baseline', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'baseline-repo')
+  installProfile(home, 'example.com-test-baseline-repo', STANDARD_PROFILE)
+  repo.write('scratch.md', 'my notes\n')   // ambient, present BEFORE the run starts
+  cli(['new-run', 'B-1'], { home, cwd: repo.dir })
+  const runDir = path.join(home, 'repos', 'example.com-test-baseline-repo', 'runs', 'B-1')
+  assert.deepEqual(readState(runDir).git.baseline_untracked, ['scratch.md'],
+    'developer scratch present at run start is captured so the boundary gate ignores it')
+})
+
+test('ignore-untracked re-baselines an in-flight run to the current untracked set', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'ignore-repo')
+  installProfile(home, 'example.com-test-ignore-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  run(['new-run', 'IG-1'])                 // clean tree at start → empty baseline
+  const runDir = path.join(home, 'repos', 'example.com-test-ignore-repo', 'runs', 'IG-1')
+  assert.deepEqual(readState(runDir).git.baseline_untracked, [])
+
+  repo.write('local-notes.md', 'scratch\n') // developer adds a local file mid-run
+  const res = run(['ignore-untracked'])
+  assert.equal(res.verdict, 'OK')
+  assert.equal(res.baseline_untracked, 1)
+  assert.equal(res.previously, 0)
+  assert.ok(res.files.includes('local-notes.md'))
+  assert.deepEqual(readState(runDir).git.baseline_untracked, ['local-notes.md'],
+    'the escape hatch persists the current untracked set as ambient')
 })

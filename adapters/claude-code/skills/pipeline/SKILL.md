@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | ignore-untracked | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -144,6 +144,20 @@ so TEST/REVIEW/PR genuinely re-run (not skipped on a stale `complete` stamp).
 Then make the change in IMPLEMENT, and `/pipeline work` re-advances forward
 through the gates as normal. Backward only — forward is always `advance`.
 Tell the developer you're reopening and why before you do it.
+
+## Boundary gate blocked on untracked files → `pipeline ignore-untracked`
+
+The write-boundary gate snapshots the developer's pre-existing untracked files
+at run start and ignores them — it only flags untracked files that appear
+DURING the run (a possible out-of-plan write). If a gate still BLOCKS on
+untracked files the developer keeps locally (scratch notes, plans, generated
+artifacts) — e.g. a run started before those files existed, or an in-flight run
+that predates this behavior — re-baseline them: `pipeline ignore-untracked
+--repo <slug>` (targets the single active run, or pass `--run <id>`). It
+snapshots the CURRENTLY-untracked files as ambient; the gate then leaves exactly
+that set alone. First confirm with the developer that the listed files are
+genuinely theirs — this is a deliberate escape hatch, so never run it to silence
+a file the pipeline itself created outside the plan. Then re-run `advance`.
 
 ## `/pipeline onboard [path]`
 

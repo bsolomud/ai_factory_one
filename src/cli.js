@@ -411,6 +411,28 @@ const commands = {
     return emit({ verdict: 'OK', substate: state.substate })
   },
 
+  // Re-snapshot the repo's currently-untracked files as this run's ambient
+  // baseline — the escape hatch for a run started before the file existed, or
+  // an in-flight run stuck on the developer's local scratch. The developer is
+  // explicitly asserting "these untracked files are mine, leave them alone";
+  // the write-boundary gate then ignores exactly this set. Untracked files that
+  // appear AFTER this point are still enforced as possible out-of-plan writes.
+  'ignore-untracked'(_, flags) {
+    const { ctx, runDir, state } = loadRun(flags)
+    const before = state.git?.baseline_untracked?.length ?? 0
+    const files = untrackedFiles(ctx.repoDir)
+    state.git.baseline_untracked = files
+    appendEvent(runDir, { event: 'baseline_untracked', count: files.length })
+    writeState(runDir, state)
+    return emit({
+      verdict: 'OK',
+      baseline_untracked: files.length,
+      previously: before,
+      files,
+      note: `${files.length} currently-untracked file(s) snapshotted as ambient — the write-boundary gate will leave them alone for this run. Untracked files created after this point are still enforced. Re-run 'pipeline advance'.`
+    })
+  },
+
   reconcile(_, flags) {
     const ctx = resolveRepo(flags, { requireProfile: true })
     const runId = flags.run || onlyActiveRun(ctx.slug)

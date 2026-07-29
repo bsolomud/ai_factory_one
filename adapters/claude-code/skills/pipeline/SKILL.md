@@ -19,7 +19,55 @@ the agents' context and their work out of yours.
   having with the developer is NOT the agents' business — except their
   answers/decisions, quoted verbatim where the flow says so.
 - Exception: at a gate, show the developer what they are approving — relay
-  the agent's summary; open the artifact/diff only if they ask for more.
+  the agent's summary in the report format below; open the artifact/diff only
+  if they ask for more.
+
+## Reporting to the developer — REQUIRED format
+
+Every time you report back after a stage (gate, ADVANCED, DONE, or BLOCKED),
+use THIS shape — never a wall of prose. It must be scannable in seconds and
+make sense read aloud.
+
+First line — a one-line header:
+`<STAGE> <result> — <run> · <repo>[ · PR #<n>][ · CI <status>]`
+
+Then the sections below, each a numbered list. **Omit any section that has no
+items** — no empty headings. One line per item; add an indented `Description:`
+line only when an item needs a word on what it is or why.
+
+- **Did this:** — what the stage actually produced (files, PR opened, CI
+  result, tests added, checks that passed). Concrete outcomes, not narration.
+- **Skipped:** — anything deliberately not done or not verified. Name the
+  thing, then a `Description:` line saying what it is and why it was skipped.
+  Fold EVERY `unverified` entry from the CLI in here (they repeat at each gate).
+- **Need you on this:** — decisions or approvals only the developer can make.
+  The gate approval itself goes here, plus any choice the executor surfaced.
+  Phrase each as a plain ask.
+- **Other:** — carried-forward notes / FYI (deferred items, follow-ups) that
+  don't belong above.
+
+If a gate is open, end with the one-line approval question (see
+`/pipeline approve`). Keep it tight: if an item needs detail, OFFER to open the
+artifact/diff instead of inlining it. Example:
+
+```
+CI complete — MB-1234 · mb_rails4 · PR #29546 · CI GREEN
+
+Did this:
+1. All CI checks green (CodeQL, gitleaks, ruby-linters, Jest, qlty).
+2. PR #29546 (draft) targets master; deferred items carried in the body.
+
+Skipped:
+1. RSpec suite in CI.
+   Description: label-gated behind run_rspec_tests; the spec passed locally in TEST.
+
+Need you on this:
+1. Approve advancing past the CI gate to SCRIBE? (reply yes)
+2. Add the run_rspec_tests label so CI runs RSpec too? Your call — I won't unless you ask.
+
+Other:
+1. Two DevOps-owned items deferred (request.host provenance; nginx /.well-known/ passthrough).
+```
 
 ## The handoff block (fill from `pipeline status` output; pass to every agent)
 
@@ -120,9 +168,9 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
    - **REVIEW** → **pipeline-reviewer**; confirmed code findings →
      **pipeline-implementer** (fix mode, findings verbatim) → fresh
      **pipeline-reviewer** to verify and finalize.
-3. Relay the executor's summary. GATE → approve protocol; ADVANCED/DONE →
-   say what `/pipeline work` does next; BLOCKED after the agent's 3 rounds →
-   show its blockers. STOP.
+3. Relay the executor's summary in the report format above. GATE → approve
+   protocol; ADVANCED/DONE → say what `/pipeline work` does next; BLOCKED after
+   the agent's 3 rounds → show its blockers. STOP.
 
 **In express mode**, `advance` auto-approves the quality gates, so a single
 `/pipeline work` may flow through several stages until it reaches the PR gate
@@ -176,8 +224,9 @@ Own agent, interactive via two phases:
 
 ## `/pipeline approve` — STRICT protocol
 
-1. Present exactly what is being approved: stage, run, repo, the executor's
-   gate summary, every `unverified` entry.
+1. Present exactly what is being approved in the report format above (header +
+   Did this / Skipped / Need you on this / Other). The gate ask goes under
+   **Need you on this**; every `unverified` entry goes under **Skipped**.
 2. Ask for explicit confirmation; WAIT.
 3. Only on an explicit yes in the developer's own words:
    `pipeline approve --note "<their words>"`. If the developer changed the

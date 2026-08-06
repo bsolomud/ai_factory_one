@@ -27,6 +27,19 @@ pasted text — see 00-ticket.md). Note what the task does NOT say. -->
      |---|-----------|-------------|
      | 1 | what must be true | test / check that proves it | -->
 
+## Decisions
+<!-- The checklist of calls only the developer can make — resolved HERE, where
+     a decision costs one chat message, not at PR, where it costs a reopen
+     cycle (re-implement → re-test → re-review). A table, one row per topic;
+     every row filled — 'N/A — <why>' is a valid answer, silence is not.
+     | Topic | Decision |
+     |-------|----------|
+     | Scope boundary | fix-here vs fix-root-cause; what this run will NOT touch |
+     | Product intent | ambiguities in observable behavior, resolved in the developer's words |
+     | Secrets / config policy | what may carry a committed default vs must be blank / ENV-injected |
+     | Migration / rollout | data migration, feature flag, backward compatibility expectations |
+     | Out of scope | explicitly excluded work someone might assume is included | -->
+
 ## Findings
 <!-- A table, one row per finding. Columns: Claim | Source | Confidence.
      EVERY claim carries a source (file path or doc) in the Source column.

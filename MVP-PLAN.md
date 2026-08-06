@@ -145,6 +145,34 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
 
 ## Progress log
 
+- 2026-08-01 — **Rounds-to-zero Tier 1+2** (from the "20-30 rounds → 1-3" assessment;
+  root causes ranked from the 3 pilot runs: tooling friction > plan decomposition >
+  late human decisions > signal noise > code quality *last*):
+  (1) **branch-aware guard** — `activeRun` resolves by the checked-out branch when
+  several runs are active (never keys enforcement off an arbitrary run); runs record
+  `branch_recorded` at the first post-BREAKDOWN advance; rebuilds restore branch +
+  the full ambient `baseline_untracked` list from events.
+  (2) **`subtask_coupling` validator** (PLAN+BREAKDOWN) — subtasks declare their
+  slice of Affected files; exclusive claims, and a file's mapped spec must sit in
+  the same subtask. The real MB-46745 plan artifact, replayed, is BLOCKED.
+  (3) **CONTEXT `## Decisions` checklist** (scope boundary / product intent /
+  secrets-config policy / migration / out-of-scope) + **`no_secrets` validator**
+  (IMPLEMENT+REVIEW): literal-credential scan of the branch diff and run-created
+  files; `pipeline:allow-secret` disarms deliberate dummies (MB-46498's PR-gate
+  secret default would have been caught at the subtask gate).
+  (4) **`human_rounds` metric** (THE pilot target: edited gates + change requests +
+  reopens) + **`pipeline request-changes`** so a declined gate is recorded, reopens
+  the stage, and survives crash-reconcile; `median_human_rounds` in aggregate.
+  (5) **`ac_traceability` validator** (TEST) — every numbered AC must appear as
+  AC#<n> in the Risk-to-test map or Deferred; `acs_total/tested/deferred` in metrics.
+  (6) **structured signals** — `check_skipped` events carry a machine `kind`
+  (regex classification kept only as legacy fallback); review artifacts declare
+  `findings: {blocking, advisory, fixed, disputed}` frontmatter, gated by
+  `review_counts` (blocking must be 0) and surfaced in metrics.
+  86/86 tests (install.test.js excluded: pre-existing environment hang, fails on
+  clean main too). Next per the assessment: run 5-7 pilot tickets, then flip
+  express to the default recommendation and close the SCRIBE knowledge write-back.
+
 - 2026-07-17 — repo scaffolded, plan written.
 - 2026-07-17 — Phases A, B, C implemented; all 8 verification criteria pass (37/37 tests).
   Fixed during verification: runs with deleted `state.json` were invisible to `status`

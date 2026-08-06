@@ -31,6 +31,10 @@ its spec-rewrite were split, and the change subtask blocked repeatedly).
 - Each subtask must be independently green: it compiles, its specs pass, nothing
   downstream is left red waiting for a later subtask.
 - Prefer fewer, self-certifying subtasks over many that only pass as a set.
+- These rules are machine-checked at `advance` (`subtask_coupling`): write
+  `## Subtasks` as a table (# | Subtask | Files) where Files is that subtask's
+  slice of `## Affected files`. Every affected file must be claimed by exactly
+  one subtask, and a file's mapped spec must sit in the same subtask as the file.
 
 ## Procedure (choreography — the dispatcher drives the sequence)
 1. **Draft** (`pipeline-planner`, mode draft): write the full plan into

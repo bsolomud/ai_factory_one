@@ -1,7 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadProfile } from './profile.js'
-import { matchesAny } from './profile.js'
+import { currentBranch, loadProfile, matchesAny } from './profile.js'
 import { readState } from './state.js'
 import * as paths from './paths.js'
 
@@ -58,7 +57,7 @@ export function guard(mode, input) {
     const slug = paths.repoSlug(repoDir)
     const profile = loadProfile(paths.profilePath(slug))
     if (!profile) return allow() // not a pipeline-onboarded repo
-    const run = activeRun(slug)
+    const run = activeRun(slug, repoDir)
     if (!run) return allow() // no run in flight — normal Claude usage
     // The decisive gate: enforce ONLY if this session engaged the pipeline.
     if (!sessionEngaged(input.session_id)) return allow()
@@ -145,17 +144,26 @@ function guardWrite(filePath, { repoDir, profile, run, cwd }) {
   return allow()
 }
 
-function activeRun(slug) {
+// Resolve the run this session is actually working in. One active run is
+// unambiguous. With several coding in the same clone, match the checked-out
+// branch against each run's recorded working branch (`branch_recorded` at the
+// first post-BREAKDOWN advance) — enforcement keyed to an arbitrary run applies
+// the WRONG run's stage rules. No single match → fail open, never guess.
+function activeRun(slug, repoDir) {
   const runsDir = path.join(paths.repoHome(slug), 'runs')
   if (!fs.existsSync(runsDir)) return null
+  const active = []
   for (const id of fs.readdirSync(runsDir)) {
     const runDir = path.join(runsDir, id)
     try {
       const state = readState(runDir)
-      if (state.stage !== 'DONE') return { state, runDir }
+      if (state.stage !== 'DONE') active.push({ state, runDir })
     } catch { /* corrupt state → reconcile's job, not the guard's */ }
   }
-  return null
+  if (active.length <= 1) return active[0] ?? null
+  const branch = currentBranch(repoDir)
+  const matches = branch ? active.filter(r => r.state.git?.branch === branch) : []
+  return matches.length === 1 ? matches[0] : null
 }
 
 const allow = () => ({ decision: 'allow', exitCode: 0 })

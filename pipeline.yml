@@ -9,7 +9,7 @@ stages:
     output: artifacts/01-context.md
     validate:
       - artifact_complete: artifacts/01-context.md
-      - sections: [Requirements, Acceptance criteria, Findings, Open questions]
+      - sections: [Requirements, Acceptance criteria, Decisions, Findings, Open questions]
     gate: { required: true }
     next: PLAN
 
@@ -22,6 +22,7 @@ stages:
       - artifact_complete: artifacts/02-plan.md
       - sections: [Approach, Affected files, Risks, Subtasks, Testing strategy, Open questions]
       - files_exist_in_repo: Affected files
+      - subtask_coupling: plan.subtasks
     gate: { required: true }
     next: BREAKDOWN
 
@@ -33,6 +34,7 @@ stages:
       - artifact_complete: artifacts/03-progress.md
       - sections: [Subtasks, Deviations]
       - substate_set: [subtask, of]
+      - subtask_coupling: plan.subtasks   # re-checked: a plan amendment between gates must not smuggle a coupling split past BREAKDOWN
     gate: { required: true }
     next: IMPLEMENT
 
@@ -44,6 +46,7 @@ stages:
       - profile_command: test_targeted
       - profile_command: post_change_hooks
       - git_clean_within: plan.affected_paths
+      - no_secrets: branch_diff
       - min_commits_per_subtask: 1
     gate: { required: true }
     next: TEST
@@ -55,6 +58,7 @@ stages:
     validate:
       - artifact_complete: artifacts/04-test-report.md
       - sections: [Coverage audit, Risk-to-test map, Added tests, Deferred]
+      - ac_traceability: acceptance_criteria
       - profile_command: lint_changed
       - profile_command: test_targeted
     gate: { required: true }
@@ -68,8 +72,10 @@ stages:
     validate:
       - artifact_complete: artifacts/05-review.md
       - sections: [Findings, Fixes applied, Disputed, Plan-vs-shipped check]
+      - review_counts: findings
       - profile_command: lint_changed
       - profile_command: test_targeted
+      - no_secrets: branch_diff   # re-scan the full branch: review-loop fixes can add lines after the last subtask gate
     gate: { required: true }
     next: PR
 

@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { parseArtifact, sections, acceptanceCriteriaIds } from './artifacts.js'
 import { readEvents } from './state.js'
 
 // Turn a run's append-only events.jsonl into the numbers a pilot needs to
@@ -46,6 +49,8 @@ export function runMetrics(runDir, runId) {
   const gates = events.filter(e => e.event === 'gate_approved')
   const validatedStages = Object.values(stages).filter(s => s.reached_validate)
   const firstPass = validatedStages.filter(s => s.first_pass === true).length
+  const changeRequests = events.filter(e => e.event === 'change_requested').length
+  const reopens = events.filter(e => e.event === 'reopened').length
 
   const spawns = events.filter(e => e.event === 'agent_spawned')
   const skips = events.filter(e => e.event === 'check_skipped')
@@ -56,9 +61,15 @@ export function runMetrics(runDir, runId) {
   //    quiet, not a gap.
   //  - no_target: "command exists but resolved to no matching files" (config/
   //    view/spec-only subtask) — expected bookkeeping.
-  const reasonOf = e => e.reason || ''
-  const notConfiguredSkips = skips.filter(e => /not configured/i.test(reasonOf(e))).length
-  const noCommandSkips = skips.filter(e => /slot .* is empty|no .* command|possible coverage gap/i.test(reasonOf(e))).length
+  // New events carry a machine `kind` from the validator itself; the regex is
+  // ONLY the legacy fallback for events recorded before kinds existed (their
+  // prose wording is frozen in old events.jsonl files) — never extend it.
+  const kindOf = e => e.kind || (
+    /not configured/i.test(e.reason || '') ? 'not_configured'
+      : /slot .* is empty|no .* command|possible coverage gap/i.test(e.reason || '') ? 'no_command'
+        : 'no_target')
+  const notConfiguredSkips = skips.filter(e => kindOf(e) === 'not_configured').length
+  const noCommandSkips = skips.filter(e => kindOf(e) === 'no_command').length
 
   return {
     run: runId,
@@ -72,6 +83,12 @@ export function runMetrics(runDir, runId) {
     gates_by: tally(gates.map(g => g.by || 'human')),
     gate_edits: gates.filter(g => g.edited).length,
     gate_edit_rate: gates.length ? round(gates.filter(g => g.edited).length / gates.length) : null,
+    // THE pilot target ("1–3 rounds"): times a human had to CORRECT the work
+    // after seeing it — an edited artifact at a gate, an explicit change
+    // request, or a backward reopen. Deliberate touchpoints (answering the
+    // context interview, approving a clean gate) are decisions, not rounds.
+    human_rounds: gates.filter(g => g.edited).length + changeRequests + reopens,
+    change_requests: changeRequests,
     // Prefer recorded substate; fall back to counting critic agent spawns, so a
     // dispatcher that ran the critic but forgot `set-substate critic_round` still
     // reports the real engagement (MB-46498: critic ran 2 rounds, substate said 0).
@@ -86,10 +103,54 @@ export function runMetrics(runDir, runId) {
     // backward moves (e.g. a late fix at PR reopening IMPLEMENT); stage_reentries
     // counts every entry into a stage beyond its first. High rework explains a
     // high agent count on a nominally small change (MB-46498: a PR-gate reopen).
-    rework_cycles: events.filter(e => e.event === 'reopened').length,
+    rework_cycles: reopens,
     stage_reentries: sum(Object.values(stages).map(s => Math.max(0, s.entries - 1))),
     feedback_notes: events.filter(e => e.event === 'feedback').length,
-    seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)]))
+    seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)])),
+    ...(acCoverage(runDir) ?? {}),
+    ...(reviewFindings(runDir) ?? {})
+  }
+}
+
+// Review effectiveness, from the review artifact's machine-readable
+// frontmatter counts (declared by the reviewer, gated by review_counts).
+function reviewFindings(runDir) {
+  try {
+    const dir = path.join(runDir, 'artifacts')
+    const file = fs.readdirSync(dir).find(f => f.endsWith('-review.md'))
+    const f = file && parseArtifact(path.join(dir, file))?.frontmatter?.findings
+    if (!f || typeof f !== 'object') return null
+    return {
+      review_findings_blocking: f.blocking ?? null,
+      review_findings_advisory: f.advisory ?? null,
+      review_findings_fixed: f.fixed ?? null,
+      review_findings_disputed: f.disputed ?? null
+    }
+  } catch {
+    return null
+  }
+}
+
+// AC coverage, derived from the artifacts themselves (also recorded facts on
+// disk): the context defines the numbered criteria, the test report accounts
+// for each as AC#<n> in its map or Deferred. null (omitted) until both exist.
+function acCoverage(runDir) {
+  try {
+    const dir = path.join(runDir, 'artifacts')
+    const files = fs.readdirSync(dir)
+    const ctxFile = files.find(f => f.endsWith('-context.md'))
+    const repFile = files.find(f => f.endsWith('-test-report.md'))
+    if (!ctxFile) return null
+    const ids = acceptanceCriteriaIds(parseArtifact(path.join(dir, ctxFile))?.body ?? '')
+    if (!ids.length) return null
+    const secs = repFile ? sections(parseArtifact(path.join(dir, repFile))?.body ?? '') : {}
+    const mapText = secs['Risk-to-test map'] ?? ''
+    const deferredText = secs['Deferred'] ?? ''
+    const tested = ids.filter(n => new RegExp(`AC[#-]?${n}\\b`).test(mapText)).length
+    const deferred = ids.filter(n => !new RegExp(`AC[#-]?${n}\\b`).test(mapText) && new RegExp(`AC[#-]?${n}\\b`).test(deferredText)).length
+    return { acs_total: ids.length, acs_tested: tested, acs_deferred: deferred }
+  } catch {
+    return null
   }
 }
 
@@ -106,6 +167,7 @@ export function aggregate(runsMetrics) {
   return {
     runs: finished,
     low_sample: lowSample,
+    median_human_rounds: median(runsMetrics.map(m => m.human_rounds).filter(r => r != null)),
     mean_first_pass_green_rate: mean(fpRates),
     mean_gate_edit_rate: mean(withGates.map(m => m.gate_edit_rate).filter(r => r != null)),
     total_gate_edits: sum(runsMetrics.map(m => m.gate_edits)),
@@ -115,7 +177,7 @@ export function aggregate(runsMetrics) {
     total_feedback_notes: sum(runsMetrics.map(m => m.feedback_notes)),
     note: lowSample
       ? `only ${finished} finished run(s) — the mean rates below are anecdotal, NOT a trend; don't read a single run as a quality signal. Need ${MIN_TREND_RUNS}+ runs.`
-      : 'first_pass_green_rate and gate_edit_rate are the headline quality signals; low edit + high first-pass = the AI is producing trustworthy artifacts.'
+      : 'median_human_rounds is the pilot target (corrections per run — aim ≤3, ideally 0 with decisions front-loaded at CONTEXT); first_pass_green_rate and gate_edit_rate are the supporting quality signals.'
   }
 }
 
@@ -128,6 +190,12 @@ function maxSubstate(events, key) {
   return events.filter(e => e.event === 'substate' && e.key === key).reduce((m, e) => Math.max(m, e.value || 0), 0)
 }
 const sum = xs => xs.reduce((a, b) => a + b, 0)
+const median = xs => {
+  if (!xs.length) return null
+  const s = [...xs].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+}
 const round = n => Math.round(n * 100) / 100
 const mean = xs => (xs.length ? round(sum(xs) / xs.length) : null)
 const tally = xs => xs.reduce((acc, x) => ((acc[x] = (acc[x] || 0) + 1), acc), {})

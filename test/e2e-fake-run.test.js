@@ -31,12 +31,12 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   assert.match(blocked.reasons.join(' '), /status 'draft'/)
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Findings: 'src/app.sh prints it.', 'Open questions': '' })
+    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': '' })
   blocked = advance()
   assert.match(blocked.reasons.join(' '), /'## Open questions'.*empty/, 'empty section blocks with section name')
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Findings: 'src/app.sh prints it.', 'Open questions': 'None.' })
+    { Requirements: 'Change app greeting.', 'Acceptance criteria': '1. app prints v2 greeting', Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': 'None.' })
   let gate = advance()
   assert.equal(gate.verdict, 'GATE', 'auto_approvable gate still gates under default gated autonomy')
   assert.match(advance().reasons.join(' '), /awaiting gate approval/, 'cannot advance past an unapproved gate')
@@ -46,7 +46,7 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   completeArtifact(runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
     Approach: 'Edit both scripts.',
     'Affected files': '- `src/app.sh`\n- `src/does-not-exist.sh`',
-    Risks: 'Greeting change breaks nothing.', Subtasks: '1. app\n2. util',
+    Risks: 'Greeting change breaks nothing.', Subtasks: '1. app — `src/app.sh`\n2. util — `src/does-not-exist.sh`',
     'Testing strategy': 'shell tests', 'Open questions': 'None.'
   })
   blocked = advance()
@@ -55,7 +55,7 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   completeArtifact(runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
     Approach: 'Edit both scripts.',
     'Affected files': '- `src/app.sh`\n- `src/util.sh`',
-    Risks: 'Greeting change breaks nothing.', Subtasks: '1. app\n2. util',
+    Risks: 'Greeting change breaks nothing.', Subtasks: '1. app — `src/app.sh`\n2. util — `src/util.sh`',
     'Testing strategy': 'shell tests', 'Open questions': 'None.'
   })
   assert.equal(advance().verdict, 'GATE')
@@ -111,7 +111,7 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   // --- TEST (profile test_targeted actually runs the repo's tests)
   completeArtifact(runDir, 'artifacts/04-test-report.md', 'T-1', 'TEST', {
     'Coverage audit': 'src/app.sh covered by tests/app_test.sh; src/util.sh uncovered.',
-    'Risk-to-test map': 'Greeting risk → tests/app_test.sh.',
+    'Risk-to-test map': 'Greeting risk → tests/app_test.sh. AC#1 → tests/app_test.sh.',
     'Added tests': 'None needed.', Deferred: 'None.'
   })
   assert.equal(advance().verdict, 'GATE'); assert.equal(approve().stage, 'REVIEW')
@@ -119,7 +119,7 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   // --- REVIEW / PR / CI / SCRIBE
   completeArtifact(runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW', {
     Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'Matches plan.'
-  })
+  }, 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }')
   assert.equal(advance().verdict, 'GATE'); assert.equal(approve().stage, 'PR')
 
   completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'T-1', 'PR', {
@@ -173,11 +173,11 @@ no_touch: []
   const runDir = path.join(home, 'repos', 'example.com-test-other-repo', 'runs', 'X-7')
 
   assert.equal(run(['new-run', 'X-7']).verdict, 'CREATED')
-  completeArtifact(runDir, 'artifacts/01-context.md', 'X-7', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'X-7', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
   assert.equal(run(['advance']).verdict, 'GATE')
   assert.equal(run(['approve']).stage, 'PLAN')
   completeArtifact(runDir, 'artifacts/02-plan.md', 'X-7', 'PLAN', {
-    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only',
+    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only — `src/app.sh`',
     'Testing strategy': 't', 'Open questions': 'None.'
   })
   assert.equal(run(['advance']).verdict, 'GATE')
@@ -210,21 +210,21 @@ test('express mode auto-approves quality gates, stops at PR, still blocks on red
   assert.equal(run(['new-run', 'X-1', '--autonomy', 'express']).verdict, 'CREATED')
 
   // CONTEXT: validators pass → auto-approved (no human), advances to PLAN.
-  completeArtifact(runDir, 'artifacts/01-context.md', 'X-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
+  completeArtifact(runDir, 'artifacts/01-context.md', 'X-1', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. works', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
   const ctx = run(['advance'])
   assert.equal(ctx.verdict, 'ADVANCED', 'CONTEXT auto-approved in express')
   assert.equal(ctx.stage, 'PLAN')
 
   // PLAN with a hallucinated path STILL blocks — validators gate regardless of mode.
   completeArtifact(runDir, 'artifacts/02-plan.md', 'X-1', 'PLAN', {
-    Approach: 'a', 'Affected files': '- `src/app.sh`\n- `src/ghost.sh`', Risks: 'r', Subtasks: '1. x',
+    Approach: 'a', 'Affected files': '- `src/app.sh`\n- `src/ghost.sh`', Risks: 'r', Subtasks: '1. x — `src/app.sh`, `src/ghost.sh`',
     'Testing strategy': 't', 'Open questions': 'None.'
   })
   assert.equal(run(['advance']).verdict, 'BLOCKED', 'express does NOT bypass validators')
 
   // Fix the plan → auto-approves through PLAN and BREAKDOWN without a human.
   completeArtifact(runDir, 'artifacts/02-plan.md', 'X-1', 'PLAN', {
-    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only',
+    Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only — `src/app.sh`',
     'Testing strategy': 't', 'Open questions': 'None.'
   })
   assert.equal(run(['advance']).stage, 'BREAKDOWN', 'PLAN auto-approved in express')
@@ -237,9 +237,9 @@ test('express mode auto-approves quality gates, stops at PR, still blocks on red
   repo.write('src/app.sh', 'echo v2\n')
   repo.git('add', '-A'); repo.git('commit', '-qm', 'X-1 subtask 1')
   assert.equal(run(['advance']).stage, 'TEST', 'IMPLEMENT subtask auto-approved in express')
-  completeArtifact(runDir, 'artifacts/04-test-report.md', 'X-1', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'm', 'Added tests': 'n', Deferred: 'None.' })
+  completeArtifact(runDir, 'artifacts/04-test-report.md', 'X-1', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' })
   assert.equal(run(['advance']).stage, 'REVIEW', 'TEST auto-approved in express')
-  completeArtifact(runDir, 'artifacts/05-review.md', 'X-1', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' })
+  completeArtifact(runDir, 'artifacts/05-review.md', 'X-1', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }')
 
   // REVIEW auto-approves and advances INTO PR (in_progress; PR artifact not made yet).
   const intoPr = run(['advance'])
@@ -292,7 +292,7 @@ test('works from any folder: NO_REPO → repos registry → --repo <slug>', { ti
   assert.equal(cli(['new-run', 'W-1', '--repo', 'example.com-test-anywhere-repo'], { home, cwd: elsewhere }).verdict, 'CREATED')
   const runDir = path.join(home, 'repos', 'example.com-test-anywhere-repo', 'runs', 'W-1')
   completeArtifact(runDir, 'artifacts/01-context.md', 'W-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': '1. works', Findings: 'f', 'Open questions': 'None.' })
+    { Requirements: 'r', 'Acceptance criteria': '1. works', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
   assert.equal(cli(['advance', '--repo', 'example.com-test-anywhere-repo'], { home, cwd: elsewhere }).verdict, 'GATE')
   assert.equal(cli(['approve', '--repo', 'example.com-test-anywhere-repo', '--note', 'yes, approved'], { home, cwd: elsewhere }).stage, 'PLAN')
   assert.equal(repos.repos[0].active_runs !== undefined, true, 'repos lists active runs')

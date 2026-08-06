@@ -85,6 +85,28 @@ test('writes: state files always denied; repo writes stage-dependent; no_touch a
   assert.match(write(repo2, 'locked/keep.txt').message, /no_touch/)
 })
 
+test('two active runs: enforcement follows the checked-out branch, never an arbitrary run', () => {
+  const { repo, home } = setup({ stage: 'PLAN' }) // run T-9, no branch recorded
+  const slug = 'example.com-test-g-repo'
+  // A second run, actively coding on its own branch.
+  const runDir2 = path.join(home, 'repos', slug, 'runs', 'T-10')
+  const state2 = newState({ runId: 'T-10', repo: slug, stage: 'IMPLEMENT', branch: 'T-10' })
+  writeState(runDir2, state2)
+
+  // On T-10's branch → T-10's IMPLEMENT rules apply: commit allowed.
+  repo.git('checkout', '-qb', 'T-10')
+  assert.equal(bash(repo, 'git commit -m x').decision, 'allow', 'branch matches the IMPLEMENT run')
+  assert.equal(bash(repo, 'git push').decision, 'deny', 'still pre-PR for the matched run')
+
+  // On a branch no run recorded (T-9 never recorded one) → ambiguous → fail open.
+  repo.git('checkout', '-q', 'master')
+  assert.equal(bash(repo, 'git commit -m x').decision, 'allow', 'no single matching run → fail open')
+
+  // Single active run stays enforced without any branch matching.
+  writeState(runDir2, { ...state2, stage: 'DONE' })
+  assert.equal(bash(repo, 'git commit -m x').decision, 'deny', 'one active run (PLAN) → its rules apply')
+})
+
 // --- opt-in: pipeline never enforces unless THIS session ran /pipeline ---
 
 test('active run does NOT enforce in a session that never ran /pipeline', () => {

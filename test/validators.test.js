@@ -148,6 +148,168 @@ test('git_clean_within: ambient untracked files snapshotted at run start never b
   assert.match(result.reasons.find(r => r.includes('rogue')), /outside the approved plan/)
 })
 
+// --- review_counts: review effectiveness machine-readable, blocking gates ---
+
+test('review_counts: missing counts block with the shape; blocking > 0 blocks; clean passes', () => {
+  const { root } = sandbox()
+  const ctx = ctxFor({ root, output: 'artifacts/05-review.md' })
+  completeArtifact(ctx.runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW', { Findings: 'None.' })
+  let result = validators.review_counts(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons[0], /findings: \{ blocking: n/)
+
+  completeArtifact(ctx.runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW', { Findings: 'race in x' },
+    'findings: { blocking: 1, advisory: 0, fixed: 0, disputed: 0 }')
+  result = validators.review_counts(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons[0], /1 unresolved BLOCKING finding/)
+
+  completeArtifact(ctx.runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW', { Findings: 'race in x — fixed' },
+    'findings: { blocking: 0, advisory: 2, fixed: 1, disputed: 0 }')
+  assert.equal(validators.review_counts(ctx).ok, true)
+})
+
+// --- ac_traceability: no acceptance criterion silently dropped at TEST ---
+
+test('ac_traceability: unmapped AC blocks; mapped or deferred ACs pass; AC#1 does not match AC#12', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-ac1')
+  const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/04-test-report.md' })
+  ctx.config = { stages: { CONTEXT: { output: 'artifacts/01-context.md' }, TEST: { output: 'artifacts/04-test-report.md' } } }
+  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', {
+    'Acceptance criteria':
+      '| # | Criterion | Verified by |\n|---|---|---|\n' +
+      '| 1 | greeting updates | app_test |\n| 2 | util untouched | manual |\n| 12 | logs stay quiet | log spec |'
+  })
+  completeArtifact(ctx.runDir, 'artifacts/04-test-report.md', 'T-1', 'TEST', {
+    'Risk-to-test map': '| Risk | Test | Coverage |\n|---|---|---|\n| AC#12 — logs | log spec | covered |',
+    Deferred: 'AC#2 — deferred at the gate: manual-only check.'
+  })
+  const result = validators.ac_traceability(ctx)
+  assert.equal(result.ok, false)
+  assert.equal(result.reasons.length, 1, 'AC#12 in the map must not satisfy AC#1')
+  assert.match(result.reasons[0], /AC#1 is not accounted for/)
+
+  completeArtifact(ctx.runDir, 'artifacts/04-test-report.md', 'T-1', 'TEST', {
+    'Risk-to-test map': 'AC#1 → tests/app_test.sh. AC#12 → log spec.',
+    Deferred: 'AC#2 — manual-only.'
+  })
+  assert.equal(validators.ac_traceability(ctx).ok, true)
+})
+
+test('ac_traceability: un-numbered acceptance criteria block with the numbering instruction', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-ac2')
+  const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/04-test-report.md' })
+  ctx.config = { stages: { CONTEXT: { output: 'artifacts/01-context.md' }, TEST: { output: 'artifacts/04-test-report.md' } } }
+  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT', {
+    'Acceptance criteria': 'the app should work better'
+  })
+  const result = validators.ac_traceability(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons[0], /no numbered rows/)
+})
+
+// --- no_secrets: committed credentials caught at the subtask gate, not at PR ---
+
+test('no_secrets: committed secret default and new-file token block; ENV lookup passes (MB-46498 class)', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-secrets1')
+  repo.git('checkout', '-qb', 'T-1')
+  // Committed diff: a quoted literal secret — exactly the shape of a config default.
+  repo.write('src/config.sh', 'sync_support_password: "hunter2secret"\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'add config')
+  // New untracked file the run created: a well-known token format.
+  repo.write('src/key.txt', 'aws AKIAIOSFODNN7EXAMPLE\n')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  const result = validators.no_secrets(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons.find(r => r.includes('src/config.sh')), /credential assignment.*never commit/s)
+  assert.match(result.reasons.find(r => r.includes('src/key.txt')), /AWS access key id/)
+
+  // ENV-injected value and a disarmed dummy both pass.
+  repo.write('src/key.txt', 'ok\n')
+  repo.write('src/config.sh', 'sync_support_password: ENV["SUPPORT_PASSWORD"]\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'env-injected')
+  assert.equal(validators.no_secrets(ctx).ok, true, 'ENV lookup is not a literal secret')
+  repo.write('src/fixture.sh', 'password: "dummy-value-123" # pipeline:allow-secret\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'fixture')
+  assert.equal(validators.no_secrets(ctx).ok, true, 'allow-secret disarms a deliberate dummy')
+})
+
+test('no_secrets: ambient untracked files are not scanned; run-created ones are', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-secrets2')
+  repo.write('my-notes.md', 'password: "my-personal-vault-pass"\n') // ambient scratch
+  const state = newState({ runId: 'T-1', repo: 'r', stage: 'IMPLEMENT', baselineUntracked: ['my-notes.md'] })
+  const ctx = ctxFor({ root, repoDir: repo.dir, state })
+  assert.equal(validators.no_secrets(ctx).ok, true, 'developer scratch never blocks')
+})
+
+// --- subtask_coupling: the MB-46745 plan defect as an exit code ---
+
+test('subtask_coupling: breaking change split from its adapting spec BLOCKS (MB-46745 regression)', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-couple1')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  // src/app.sh maps to tests/app_test.sh via test_layout — putting the spec in
+  // a different subtask is exactly the split that aborted MB-46745.
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files': '- `src/app.sh`\n- `tests/app_test.sh`',
+    Subtasks:
+      '| # | Subtask | Files |\n' +
+      '|---|---------|-------|\n' +
+      '| 1 | breaking model change | `src/app.sh` |\n' +
+      '| 2 | rewrite the spec | `tests/app_test.sh` |'
+  })
+  const result = validators.subtask_coupling(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons[0], /spec tests\/app_test\.sh is in subtask 2.*ONE subtask/s)
+})
+
+test('subtask_coupling: change and spec in the SAME subtask passes; numbered-list format accepted', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-couple2')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files': '- `src/app.sh`\n- `tests/app_test.sh`\n- `src/util.sh`',
+    Subtasks: '1. app + its spec — `src/app.sh`, `tests/app_test.sh`\n2. util — `src/util.sh`'
+  })
+  assert.equal(validators.subtask_coupling(ctx).ok, true)
+})
+
+test('subtask_coupling: orphan affected file, double-claim, and undeclared subtask file each reported', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-couple3')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files': '- `src/app.sh`\n- `src/util.sh`\n- `src/orphan.sh`',
+    Subtasks:
+      '| # | Subtask | Files |\n' +
+      '|---|---------|-------|\n' +
+      '| 1 | app | `src/app.sh`, `src/stranger.sh` |\n' +
+      '| 2 | app again + util | `src/app.sh`, `src/util.sh` |'
+  })
+  const result = validators.subtask_coupling(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons.find(r => r.includes('orphan')), /no subtask claims it/)
+  assert.match(result.reasons.find(r => r.includes('claimed by both')), /subtask 1 and subtask 2/)
+  assert.match(result.reasons.find(r => r.includes('stranger')), /not in '## Affected files'/)
+})
+
+test('subtask_coupling: subtasks without declared Files block with the table instruction', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-couple4')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files': '- `src/app.sh`',
+    Subtasks: '1. do the thing\n2. do the other thing'
+  })
+  const result = validators.subtask_coupling(ctx)
+  assert.equal(result.ok, false)
+  assert.match(result.reasons[0], /subtask 1 lists no Files/)
+})
+
 test('min_commits_per_subtask: counts branch commits against the cursor', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'v-repo5')

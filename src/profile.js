@@ -86,6 +86,19 @@ export function untrackedFiles(repoDir) {
   }
 }
 
+// The branch currently checked out — null when detached or not a repo. Runs
+// record their working branch so the guard can resolve WHICH run the developer
+// is in when several are active, instead of keying enforcement off an
+// arbitrary one.
+export function currentBranch(repoDir) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoDir, encoding: 'utf8' }).trim()
+    return out && out !== 'HEAD' ? out : null
+  } catch {
+    return null
+  }
+}
+
 export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
   const out = new Set()
   const run = args => {

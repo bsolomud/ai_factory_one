@@ -57,10 +57,12 @@ export function guard(mode, input) {
     const slug = paths.repoSlug(repoDir)
     const profile = loadProfile(paths.profilePath(slug))
     if (!profile) return allow() // not a pipeline-onboarded repo
+    // The decisive gate FIRST — it's one stat, while activeRun scans every run
+    // dir (and may spawn git). The common case, a normal non-pipeline session
+    // in an onboarded repo, must stay near-free on every guarded tool call.
+    if (!sessionEngaged(input.session_id)) return allow()
     const run = activeRun(slug, repoDir)
     if (!run) return allow() // no run in flight — normal Claude usage
-    // The decisive gate: enforce ONLY if this session engaged the pipeline.
-    if (!sessionEngaged(input.session_id)) return allow()
     if (mode === 'bash') return guardBash(input.tool_input?.command || '', run)
     if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, cwd })
     return allow()

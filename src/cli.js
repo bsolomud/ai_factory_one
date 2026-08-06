@@ -193,9 +193,19 @@ const commands = {
     // Record the run's working branch the first time one exists (created at
     // BREAKDOWN). With several runs active in one clone, the guard resolves
     // WHICH run the developer is in by this branch — it must never guess.
+    // A branch another active run already recorded is never double-claimed:
+    // advancing run A while run B's branch happens to be checked out would
+    // otherwise key A's enforcement to B's branch for good.
     if (!state.git.branch) {
       const branch = currentBranch(ctx.repoDir)
-      if (branch && branch !== state.git.base) {
+      const claimed = branch && listRuns(ctx.slug).some(r => {
+        if (r.id === state.run_id) return false
+        try {
+          const s = readState(paths.runDir(ctx.slug, r.id))
+          return s.stage !== 'DONE' && s.git?.branch === branch
+        } catch { return false }
+      })
+      if (branch && branch !== state.git.base && !claimed) {
         state.git.branch = branch
         appendEvent(runDir, { event: 'branch_recorded', branch })
       }
@@ -287,10 +297,11 @@ const commands = {
   metrics(_, flags) {
     // Org-wide rollup: every known repo, no repo context needed. Runs from any
     // folder — the single command a pilot uses to see the whole pipeline.
+    const config = loadPipeline()
     if (flags.all) {
       const repos = paths.knownRepos().filter(r => r.has_profile)
       const perRepo = repos.map(r => {
-        const runs = listRuns(r.slug).map(x => runMetrics(paths.runDir(r.slug, x.id), x.id))
+        const runs = listRuns(r.slug).map(x => runMetrics(paths.runDir(r.slug, x.id), x.id, config))
         return { repo: r.slug, runs, summary: aggregate(runs) }
       })
       const allRuns = perRepo.flatMap(r => r.runs)
@@ -303,9 +314,9 @@ const commands = {
     }
     const ctx = resolveRepo(flags, { requireProfile: true })
     if (flags.run) {
-      return emit({ verdict: 'OK', ...runMetrics(paths.runDir(ctx.slug, flags.run), flags.run) })
+      return emit({ verdict: 'OK', ...runMetrics(paths.runDir(ctx.slug, flags.run), flags.run, config) })
     }
-    const perRun = listRuns(ctx.slug).map(r => runMetrics(paths.runDir(ctx.slug, r.id), r.id))
+    const perRun = listRuns(ctx.slug).map(r => runMetrics(paths.runDir(ctx.slug, r.id), r.id, config))
     return emit({ verdict: 'OK', repo: ctx.slug, summary: aggregate(perRun), runs: perRun })
   },
 

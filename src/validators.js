@@ -1,8 +1,10 @@
 import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { acceptanceCriteriaIds, parseArtifact, sections, pathsInSection } from './artifacts.js'
+import { acAccounting, acceptanceCriteriaIds, backtickPaths, parseArtifact, sections, pathsInSection } from './artifacts.js'
+import { artifactFor } from './config.js'
 import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
+import { SKIP_KINDS } from './state.js'
 
 // Every validator: (ctx, param) → {ok:true} | {ok:false, reasons:[...]} | {skip:true, reason}.
 // Failure strings are instructions a model can act on — they land in Claude's
@@ -11,6 +13,16 @@ import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedi
 // ctx: { runDir, repoDir, profile, state, stageDef, stageName }
 
 const artifactAbs = (ctx, rel) => path.join(ctx.runDir, rel)
+
+// One advance runs several validators that all ask git for the same file
+// lists — memoized on the shared ctx so a subtask gate spawns each git
+// subprocess once, not once per validator.
+const ctxChangedFiles = (ctx, opts = {}) => {
+  const memo = (ctx._memo ??= {})
+  const key = opts.includeUntracked ? 'changed+untracked' : 'changed'
+  return memo[key] ??= changedFiles(ctx.repoDir, ctx.state?.git?.base || 'master', opts)
+}
+const ctxUntrackedFiles = ctx => (ctx._memo ??= {}).untracked ??= untrackedFiles(ctx.repoDir)
 
 export const validators = {
 
@@ -64,8 +76,7 @@ export const validators = {
         ? skip(`profile slot '${slot}' is empty for this repo — check skipped, recorded as UNVERIFIED (a real coverage gap; add the command via '/pipeline onboard')`, 'no_command')
         : skip(`optional slot '${slot}' is not configured for this repo — not applicable, recorded as UNVERIFIED (not a coverage gap)`, 'not_configured')
     }
-    const base = ctx.state?.git?.base || 'master'
-    const files = changedFiles(ctx.repoDir, base)
+    const files = ctxChangedFiles(ctx)
     const tests = targetedTests(ctx.repoDir, files, ctx.profile)
     const reasons = []
     const skipped = []
@@ -150,11 +161,17 @@ export const validators = {
       if (line.startsWith('+') && !line.startsWith('+++')) scanLine(file, line.slice(1))
     }
     const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
-    for (const f of untrackedFiles(ctx.repoDir)) {
+    for (const f of ctxUntrackedFiles(ctx)) {
       if (ambient.has(f)) continue
+      const abs = path.join(ctx.repoDir, f)
       try {
-        for (const line of fs.readFileSync(path.join(ctx.repoDir, f), 'utf8').split('\n')) scanLine(f, line)
-      } catch { /* binary or unreadable — the boundary check owns unexpected files */ }
+        // Bound the scan: an oversized or binary run-created file (log, dump,
+        // sqlite) is not scannable text — the boundary check owns those.
+        if (fs.statSync(abs).size > MAX_SECRET_SCAN_BYTES) continue
+        const content = fs.readFileSync(abs, 'utf8')
+        if (content.slice(0, 8192).includes('\0')) continue
+        for (const line of content.split('\n')) scanLine(f, line)
+      } catch { /* unreadable — the boundary check owns unexpected files */ }
     }
     return reasons.length ? { ok: false, reasons } : ok()
   },
@@ -180,15 +197,15 @@ export const validators = {
   },
 
   git_clean_within(ctx) {
-    const planRel = findPlanArtifact(ctx)
-    const artifact = planRel && parseArtifact(artifactAbs(ctx, planRel))
+    const planRel = artifactFor(ctx.config, '-plan.md')
+    if (!planRel) return fail(`cannot enforce the write boundary: no stage in pipeline.yml outputs a '-plan.md' artifact`)
+    const artifact = parseArtifact(artifactAbs(ctx, planRel))
     if (!artifact) return fail(`cannot enforce the write boundary: plan artifact not found — the plan stage must complete first`)
     const affected = pathsInSection(sections(artifact.body)['Affected files'] ?? '').map(p => p.path)
     if (affected.length === 0) return fail(`the plan's '## Affected files' section lists no paths — the write boundary cannot be derived`)
-    const base = ctx.state?.git?.base || 'master'
     // Boundary enforcement DOES want untracked files: a run's brand-new file that
     // isn't committed yet is still an out-of-plan write we must catch.
-    const files = changedFiles(ctx.repoDir, base, { includeUntracked: true })
+    const files = ctxChangedFiles(ctx, { includeUntracked: true })
     const allowedTests = targetedTests(ctx.repoDir, affected, ctx.profile)
     const noTouch = ctx.profile?.no_touch || []
     const testDirs = Object.values(ctx.profile?.test_layout || {})
@@ -221,8 +238,9 @@ export const validators = {
   // QA prompt before; a dropped criterion is a guaranteed "wait, it doesn't
   // do X" round after merge.
   ac_traceability(ctx) {
-    const contextRel = findArtifactBySuffix(ctx, '-context.md')
-    const context = contextRel && parseArtifact(artifactAbs(ctx, contextRel))
+    const contextRel = artifactFor(ctx.config, '-context.md')
+    if (!contextRel) return fail(`cannot check acceptance-criteria coverage: no stage in pipeline.yml outputs a '-context.md' artifact`)
+    const context = parseArtifact(artifactAbs(ctx, contextRel))
     if (!context) return fail(`cannot check acceptance-criteria coverage: context artifact not found`)
     const ids = acceptanceCriteriaIds(context.body)
     if (ids.length === 0) {
@@ -232,15 +250,9 @@ export const validators = {
     const report = rel && parseArtifact(artifactAbs(ctx, rel))
     if (!report) return fail(`artifact ${rel} does not exist yet`)
     const secs = sections(report.body)
-    const mapText = secs['Risk-to-test map'] ?? ''
-    const deferredText = secs['Deferred'] ?? ''
-    const reasons = []
-    for (const n of ids) {
-      const ref = new RegExp(`AC[#-]?${n}\\b`)
-      if (!ref.test(mapText) && !ref.test(deferredText)) {
-        reasons.push(`acceptance criterion AC#${n} is not accounted for in ${rel} — add a '## Risk-to-test map' row naming the test that proves it (or 'not tested because <reason>'), or park it under '## Deferred'; criteria are never silently dropped`)
-      }
-    }
+    const { missing } = acAccounting(ids, secs['Risk-to-test map'] ?? '', secs['Deferred'] ?? '')
+    const reasons = missing.map(n =>
+      `acceptance criterion AC#${n} is not accounted for in ${rel} — add a '## Risk-to-test map' row naming the test that proves it (or 'not tested because <reason>'), or park it under '## Deferred'; criteria are never silently dropped`)
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
@@ -250,15 +262,16 @@ export const validators = {
   // subtask can never pass its own gate. Requires each subtask to declare its
   // slice of '## Affected files'; checks the slices partition the boundary.
   subtask_coupling(ctx) {
-    const planRel = findPlanArtifact(ctx)
-    const artifact = planRel && parseArtifact(artifactAbs(ctx, planRel))
+    const planRel = artifactFor(ctx.config, '-plan.md')
+    if (!planRel) return fail(`cannot check subtask coupling: no stage in pipeline.yml outputs a '-plan.md' artifact`)
+    const artifact = parseArtifact(artifactAbs(ctx, planRel))
     if (!artifact) return fail(`cannot check subtask coupling: plan artifact not found — the plan stage must complete first`)
     const secs = sections(artifact.body)
     const subtasks = parseSubtaskFiles(secs['Subtasks'] ?? '')
     if (subtasks.length === 0) {
       return fail(`the plan's '## Subtasks' section declares no subtasks with Files — write it as a table (# | Subtask | Files) where Files is each subtask's slice of '## Affected files' (backticked paths); the coupling check gates on it`)
     }
-    const affected = pathsInSection(secs['Affected files'] ?? '').map(p => p.path)
+    const affected = new Set(pathsInSection(secs['Affected files'] ?? '').map(p => p.path))
     const reasons = []
     const claimedBy = new Map()
     for (const st of subtasks) {
@@ -272,7 +285,7 @@ export const validators = {
         } else {
           claimedBy.set(f, st.n)
         }
-        if (!affected.includes(f)) {
+        if (!affected.has(f)) {
           reasons.push(`subtask ${st.n} lists ${f}, which is not in '## Affected files' — the write boundary and the subtasks must agree; add it there or remove it here`)
         }
       }
@@ -331,7 +344,11 @@ export function runValidators(ctx) {
   const reasons = []
   const unverified = []
   for (const item of spec) {
-    const [name, param] = Object.entries(item)[0]
+    // A list item is either a bare validator name (- no_secrets) or a
+    // name→param map (- profile_command: lint_changed). Only validators that
+    // actually consume a param take one — a param on the others is not
+    // accepted, so pipeline.yml can never carry decorative config.
+    const [name, param] = typeof item === 'string' ? [item] : Object.entries(item)[0]
     const fn = validators[name]
     if (!fn) { reasons.push(`pipeline.yml names unknown validator '${name}'`); continue }
     const result = fn(ctx, param)
@@ -354,9 +371,16 @@ const SECRET_PATTERNS = [
   ['credential assignment', /(?:api[_-]?key|secret[_-]?key|secret|token|password|passwd)\b\s*(?:[:=]|=>)\s*['"][^'"\s]{8,}['"]/i]
 ]
 
+// Untracked files larger than this are not scannable text (logs, dumps,
+// sqlite) — no_secrets skips them; the boundary check owns unexpected files.
+const MAX_SECRET_SCAN_BYTES = 1024 * 1024
+
 // Per-subtask file claims from '## Subtasks'. Accepts a table row
 // (| 1 | title | `a`, `b` |) or a numbered list item (1. title — `a`, `b`);
 // lines without a leading number attach their paths to the current subtask.
+// Paths are extracted by the same shared rule as '## Affected files'
+// (backtickPaths) — subtask_coupling compares those two sets against each
+// other, so they must never parse differently.
 function parseSubtaskFiles(text) {
   const subtasks = []
   let current = null
@@ -367,27 +391,14 @@ function parseSubtaskFiles(text) {
     const n = table ? parseInt(table[1], 10) : list ? parseInt(list[1], 10) : null
     if (n != null) { current = { n, files: [] }; subtasks.push(current) }
     if (!current) continue
-    for (const m of line.matchAll(/`([^`]+)`/g)) {
-      const cleaned = m[1].replace(/:\d+(-\d+)?$/, '').trim()
-      if (cleaned.includes('/') || /\.\w+$/.test(cleaned)) current.files.push(cleaned)
-    }
+    current.files.push(...backtickPaths(line))
   }
   return subtasks
 }
 
-function findPlanArtifact(ctx) {
-  // The plan artifact is whichever stage output ends in -plan.md (graph-driven, not hardcoded).
-  return findArtifactBySuffix(ctx, '-plan.md') || 'artifacts/02-plan.md'
-}
-
-function findArtifactBySuffix(ctx, suffix) {
-  for (const def of Object.values(ctx.config?.stages || {})) {
-    if (def.output?.endsWith(suffix)) return def.output
-  }
-  return suffix === '-context.md' ? 'artifacts/01-context.md' : null
-}
-
 const ok = () => ({ ok: true })
 const fail = reason => ({ ok: false, reasons: [reason] })
-const skip = (reason, kind = 'other') => ({ skip: true, reason, kind })
+// kind is a persisted protocol (events.jsonl) — unknown kinds are normalized
+// to 'other' rather than frozen misclassified on disk.
+const skip = (reason, kind = 'other') => ({ skip: true, reason, kind: SKIP_KINDS.includes(kind) ? kind : 'other' })
 const lastLines = (s, n) => s.trim().split('\n').slice(-n).join('\n')

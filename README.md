@@ -163,7 +163,7 @@ commands:                 # capability slots — every value verified by running
   post_change_hooks:
     - { when: "generated/**", run: "<regen command>" }
 test_layout: { "src/**": "tests/" }   # changed file → its tests
-test_file_pattern: "(_test|_spec|\\.test|\\.spec)\\.[^.]+$"  # optional — what counts as a runnable test file (default shown); helpers/factories under test dirs never run
+test_file_pattern: "(_test|_spec|\\.test|\\.spec)\\.[^./]+$"  # optional — what counts as a runnable test file (default shown); helpers/factories under test dirs never run
 conventions: { base_branch: master, branch_pattern: "T-<id>" }
 no_touch: ["vendored/**", "locales/!(en)/**"]
 ```

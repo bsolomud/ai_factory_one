@@ -90,7 +90,17 @@ export function untrackedFiles(repoDir) {
 // record their working branch so the guard can resolve WHICH run the developer
 // is in when several are active, instead of keying enforcement off an
 // arbitrary one.
+// Reads .git/HEAD directly (~0.1ms) because the guard calls this on the
+// PreToolUse hot path — a git subprocess (~10-30ms) per guarded tool call
+// would dominate its budget. Falls back to git for layouts the fast path
+// doesn't cover (worktrees, submodules: .git is a file, not a directory).
 export function currentBranch(repoDir) {
+  try {
+    const head = fs.readFileSync(path.join(repoDir, '.git', 'HEAD'), 'utf8').trim()
+    const m = head.match(/^ref: refs\/heads\/(.+)$/)
+    if (m) return m[1]
+    if (/^[0-9a-f]{40,64}$/i.test(head)) return null // detached HEAD
+  } catch { /* .git is a file (worktree) or unreadable — ask git */ }
   try {
     const out = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoDir, encoding: 'utf8' }).trim()
     return out && out !== 'HEAD' ? out : null

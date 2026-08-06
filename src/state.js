@@ -6,6 +6,12 @@ export class StateError extends Error {}
 const REQUIRED_KEYS = ['schema_version', 'run_id', 'repo', 'stage', 'stage_status', 'substate', 'gates']
 const STAGE_STATUSES = ['in_progress', 'awaiting_gate', 'complete']
 
+// The skip-kind taxonomy check_skipped events persist into events.jsonl.
+// Owned HERE because it is a cross-file protocol: validators write kinds,
+// metrics buckets by them, and events are frozen on disk — a typo'd kind
+// would be a permanently misclassified event no writer-side fix can repair.
+export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'other']
+
 export function newState({ runId, repo, stage, base, branch, baselineUntracked }) {
   return {
     schema_version: 1,

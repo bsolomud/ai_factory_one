@@ -44,3 +44,14 @@ export function stageForArtifact(config, artifactRel) {
   }
   return null
 }
+
+// The inverse, by suffix: which stage output ends in '-plan.md'/'-context.md'…
+// Graph-driven artifact discovery — the single chokepoint for validators AND
+// metrics. Returns null when no stage declares one; callers surface that as
+// "config has no such output", never a guessed hardcoded path.
+export function artifactFor(config, suffix) {
+  for (const def of Object.values(config?.stages || {})) {
+    if (def.output?.endsWith(suffix)) return def.output
+  }
+  return null
+}

@@ -13,6 +13,13 @@ test('validateProfile: catches structural errors, warns on soft gaps', () => {
   assert.ok(bad.errors.some(e => /test_layout/.test(e)))
   const good = validateProfile({ commands: { lint_changed: 'lint {changed_files}', test_targeted: 't' }, conventions: { base_branch: 'main' }, no_touch: [] })
   assert.equal(good.errors.length, 0)
+
+  const badRe = validateProfile({ commands: {}, test_file_pattern: '(' })
+  assert.ok(badRe.errors.some(e => /test_file_pattern.*not a valid regex/.test(e)))
+  const badType = validateProfile({ commands: {}, test_file_pattern: ['x'] })
+  assert.ok(badType.errors.some(e => /test_file_pattern.*must be a string/.test(e)))
+  const goodRe = validateProfile({ commands: { lint_changed: 'l', test_targeted: 't' }, conventions: { base_branch: 'main' }, test_file_pattern: 'test_.*\\.py$' })
+  assert.equal(goodRe.errors.length, 0)
 })
 
 test('doctor: OK for a valid profile, INVALID (exit 1) for a broken one', () => {

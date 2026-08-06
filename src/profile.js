@@ -37,6 +37,10 @@ export function validateProfile(profile) {
 
   if ('no_touch' in profile && !Array.isArray(profile.no_touch)) errors.push("'no_touch' must be a list of globs")
   if ('test_layout' in profile && (typeof profile.test_layout !== 'object' || Array.isArray(profile.test_layout))) errors.push("'test_layout' must be a mapping of src-glob → test-dir")
+  if ('test_file_pattern' in profile) {
+    if (typeof profile.test_file_pattern !== 'string') errors.push("'test_file_pattern' must be a string (a JS regex)")
+    else try { new RegExp(profile.test_file_pattern) } catch (e) { errors.push(`'test_file_pattern' is not a valid regex: ${e.message}`) }
+  }
   const base = profile.conventions?.base_branch
   if (!base) warnings.push("no conventions.base_branch — defaulting to 'master'; set it if the repo uses 'main'")
 
@@ -98,6 +102,15 @@ export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
   return [...out]
 }
 
+// What counts as a runnable test file. Extension-agnostic (foo_spec.rb,
+// foo_test.sh, bar.test.js, bar.spec.tsx) but deliberately excludes the
+// non-runnable inhabitants of test dirs — factories, rails_helper.rb,
+// spec/support/**, Jest setup files. Feeding those to the runner errors the
+// whole invocation (MB-47027: a changed spec/factories/*.rb passed to rspec →
+// FactoryBot::DuplicateDefinitionError → gate false-BLOCKED). Repos with
+// other conventions (e.g. Python's test_*.py) set profile.test_file_pattern.
+const DEFAULT_TEST_FILE_RE = /(_test|_spec|\.test|\.spec)\.[^./]+$/
+
 // Targeted tests for the changed files, via the profile's test_layout mapping
 // (src-prefix glob → test dir). Conservative: only returns test files that
 // actually exist — resolving nothing yields [] and the caller records UNVERIFIED
@@ -105,11 +118,16 @@ export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
 export function targetedTests(repoDir, files, profile) {
   const layout = profile?.test_layout || {}
   const found = new Set()
-  const testDirs = Object.values(layout)
+  const testRe = profile?.test_file_pattern
+    ? new RegExp(profile.test_file_pattern)
+    : DEFAULT_TEST_FILE_RE
+  // dir + '/' so a test dir 'spec' can't prefix-match a sibling like
+  // 'spec_helper.rb' or 'specs_old/'.
+  const testDirs = Object.values(layout).map(d => (d.endsWith('/') ? d : d + '/'))
   for (const file of files) {
-    if (testDirs.some(dir => file.startsWith(dir))) { // changed file IS a test
-      found.add(file)
-      continue
+    if (testDirs.some(dir => file.startsWith(dir))) { // changed file IS under a test dir
+      if (testRe.test(file)) found.add(file)          // ...but only runnable tests run
+      continue                                        // helpers/factories contribute nothing
     }
     for (const [srcGlob, testDir] of Object.entries(layout)) {
       const prefix = srcGlob.split('*')[0]
@@ -120,7 +138,7 @@ export function targetedTests(repoDir, files, profile) {
       if (!fs.existsSync(dir)) continue
       const base = path.basename(stem)
       for (const candidate of fs.readdirSync(dir)) {
-        if (candidate.startsWith(base + '_') || candidate.startsWith(base + '.')) {
+        if ((candidate.startsWith(base + '_') || candidate.startsWith(base + '.')) && testRe.test(candidate)) {
           found.add(path.join(path.dirname(stem), candidate))
         }
       }

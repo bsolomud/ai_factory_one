@@ -1,6 +1,6 @@
-import fs from 'node:fs'
 import path from 'node:path'
-import { parseArtifact, sections, acceptanceCriteriaIds } from './artifacts.js'
+import { acAccounting, parseArtifact, sections, acceptanceCriteriaIds } from './artifacts.js'
+import { artifactFor } from './config.js'
 import { readEvents } from './state.js'
 
 // Turn a run's append-only events.jsonl into the numbers a pilot needs to
@@ -10,7 +10,11 @@ import { readEvents } from './state.js'
 // gate_edit_rate (how often the developer had to change an artifact before
 // approving — the clearest proxy for AI output quality).
 
-export function runMetrics(runDir, runId) {
+// config (the loaded pipeline.yml) locates the artifacts the artifact-derived
+// metrics read — the same graph-driven discovery the validators use, so the
+// gate and the metric can never disagree about WHICH file is the review or
+// test report. Without config those metrics are omitted.
+export function runMetrics(runDir, runId, config = null) {
   const events = readEvents(runDir)
   const at = e => Date.parse(e.at)
   const start = events[0] ? at(events[0]) : null
@@ -49,6 +53,7 @@ export function runMetrics(runDir, runId) {
   const gates = events.filter(e => e.event === 'gate_approved')
   const validatedStages = Object.values(stages).filter(s => s.reached_validate)
   const firstPass = validatedStages.filter(s => s.first_pass === true).length
+  const gateEdits = gates.filter(g => g.edited).length
   const changeRequests = events.filter(e => e.event === 'change_requested').length
   const reopens = events.filter(e => e.event === 'reopened').length
 
@@ -81,13 +86,13 @@ export function runMetrics(runDir, runId) {
     blocked_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.blocked).map(([k, s]) => [k, s.blocked])),
     gates_approved: gates.length,
     gates_by: tally(gates.map(g => g.by || 'human')),
-    gate_edits: gates.filter(g => g.edited).length,
-    gate_edit_rate: gates.length ? round(gates.filter(g => g.edited).length / gates.length) : null,
+    gate_edits: gateEdits,
+    gate_edit_rate: gates.length ? round(gateEdits / gates.length) : null,
     // THE pilot target ("1–3 rounds"): times a human had to CORRECT the work
     // after seeing it — an edited artifact at a gate, an explicit change
     // request, or a backward reopen. Deliberate touchpoints (answering the
     // context interview, approving a clean gate) are decisions, not rounds.
-    human_rounds: gates.filter(g => g.edited).length + changeRequests + reopens,
+    human_rounds: gateEdits + changeRequests + reopens,
     change_requests: changeRequests,
     // Prefer recorded substate; fall back to counting critic agent spawns, so a
     // dispatcher that ran the critic but forgot `set-substate critic_round` still
@@ -107,51 +112,43 @@ export function runMetrics(runDir, runId) {
     stage_reentries: sum(Object.values(stages).map(s => Math.max(0, s.entries - 1))),
     feedback_notes: events.filter(e => e.event === 'feedback').length,
     seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)])),
-    ...(acCoverage(runDir) ?? {}),
-    ...(reviewFindings(runDir) ?? {})
+    ...(acCoverage(runDir, config) ?? {}),
+    ...(reviewFindings(runDir, config) ?? {})
   }
+}
+
+// Both artifact-derived helpers locate their file via artifactFor(config, …)
+// — never a directory scan, which could pick up a stray/backup file the
+// validators would ignore.
+const artifact = (runDir, config, suffix) => {
+  const rel = artifactFor(config, suffix)
+  return rel ? parseArtifact(path.join(runDir, rel)) : null
 }
 
 // Review effectiveness, from the review artifact's machine-readable
 // frontmatter counts (declared by the reviewer, gated by review_counts).
-function reviewFindings(runDir) {
-  try {
-    const dir = path.join(runDir, 'artifacts')
-    const file = fs.readdirSync(dir).find(f => f.endsWith('-review.md'))
-    const f = file && parseArtifact(path.join(dir, file))?.frontmatter?.findings
-    if (!f || typeof f !== 'object') return null
-    return {
-      review_findings_blocking: f.blocking ?? null,
-      review_findings_advisory: f.advisory ?? null,
-      review_findings_fixed: f.fixed ?? null,
-      review_findings_disputed: f.disputed ?? null
-    }
-  } catch {
-    return null
+function reviewFindings(runDir, config) {
+  const f = artifact(runDir, config, '-review.md')?.frontmatter?.findings
+  if (!f || typeof f !== 'object') return null
+  return {
+    review_findings_blocking: f.blocking ?? null,
+    review_findings_advisory: f.advisory ?? null,
+    review_findings_fixed: f.fixed ?? null,
+    review_findings_disputed: f.disputed ?? null
   }
 }
 
 // AC coverage, derived from the artifacts themselves (also recorded facts on
 // disk): the context defines the numbered criteria, the test report accounts
 // for each as AC#<n> in its map or Deferred. null (omitted) until both exist.
-function acCoverage(runDir) {
-  try {
-    const dir = path.join(runDir, 'artifacts')
-    const files = fs.readdirSync(dir)
-    const ctxFile = files.find(f => f.endsWith('-context.md'))
-    const repFile = files.find(f => f.endsWith('-test-report.md'))
-    if (!ctxFile) return null
-    const ids = acceptanceCriteriaIds(parseArtifact(path.join(dir, ctxFile))?.body ?? '')
-    if (!ids.length) return null
-    const secs = repFile ? sections(parseArtifact(path.join(dir, repFile))?.body ?? '') : {}
-    const mapText = secs['Risk-to-test map'] ?? ''
-    const deferredText = secs['Deferred'] ?? ''
-    const tested = ids.filter(n => new RegExp(`AC[#-]?${n}\\b`).test(mapText)).length
-    const deferred = ids.filter(n => !new RegExp(`AC[#-]?${n}\\b`).test(mapText) && new RegExp(`AC[#-]?${n}\\b`).test(deferredText)).length
-    return { acs_total: ids.length, acs_tested: tested, acs_deferred: deferred }
-  } catch {
-    return null
-  }
+function acCoverage(runDir, config) {
+  const context = artifact(runDir, config, '-context.md')
+  if (!context) return null
+  const ids = acceptanceCriteriaIds(context.body)
+  if (!ids.length) return null
+  const secs = sections(artifact(runDir, config, '-test-report.md')?.body ?? '')
+  const { tested, deferred } = acAccounting(ids, secs['Risk-to-test map'] ?? '', secs['Deferred'] ?? '')
+  return { acs_total: ids.length, acs_tested: tested.length, acs_deferred: deferred.length }
 }
 
 // Sample size below which the mean rates are anecdote, not trend. Kept low

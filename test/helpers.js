@@ -54,6 +54,12 @@ export function cli(args, { home, cwd }) {
   }
 }
 
+// Canonical fake artifact inputs. One home, so adding a required section (the
+// Decisions gate did this — it forced edits at every call site) is a one-line
+// change here, not a sweep across the test files.
+export const contextSections = (over = {}) => ({ Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.', ...over })
+export const CLEAN_REVIEW_COUNTS = 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }'
+
 // Write an artifact with completed frontmatter + given sections (fake stage work).
 // extraFrontmatter: raw YAML lines appended to the frontmatter (e.g. the review
 // artifact's machine-read findings counts).

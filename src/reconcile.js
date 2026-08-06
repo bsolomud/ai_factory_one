@@ -90,14 +90,8 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   // rebuilt run is back in_progress — not wedged awaiting a gate that the
   // developer already declined.
   if (state.stage_status === 'awaiting_gate') {
-    let lastValidated = -1
-    let lastChangeReq = -1
-    events.forEach((e, i) => {
-      if (e.stage !== state.stage) return
-      if (e.event === 'validated') lastValidated = i
-      if (e.event === 'change_requested') lastChangeReq = i
-    })
-    if (lastChangeReq > lastValidated) state.stage_status = 'in_progress'
+    const last = ev => events.findLastIndex(e => e.stage === state.stage && e.event === ev)
+    if (last('change_requested') > last('validated')) state.stage_status = 'in_progress'
   }
   // Restore substate counters from the last recorded substate events.
   for (const e of events) {

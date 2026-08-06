@@ -46,6 +46,39 @@ export function acceptanceCriteriaIds(body) {
   return ids
 }
 
+// The AC-reference grammar (AC#1 / AC-1 / AC1) and the accounting of which
+// numbered criteria a test report covers. ONE home for the contract between
+// the ac_traceability gate (blocks on `missing`) and metrics (counts tested/
+// deferred) — implemented twice they would silently drift apart.
+export const acRef = n => new RegExp(`AC[#-]?${n}\\b`)
+
+export function acAccounting(ids, mapText, deferredText) {
+  const tested = []
+  const deferred = []
+  const missing = []
+  for (const n of ids) {
+    const ref = acRef(n)
+    if (ref.test(mapText)) tested.push(n)
+    else if (ref.test(deferredText)) deferred.push(n)
+    else missing.push(n)
+  }
+  return { tested, deferred, missing }
+}
+
+// A token cleaned to a path: trailing :123 / :123-456 line refs stripped; only
+// path-like tokens (contain '/' or carry an extension) qualify.
+const cleanPath = token => {
+  const cleaned = token.replace(/:\d+(-\d+)?$/, '').trim()
+  return cleaned.includes('/') || /\.\w+$/.test(cleaned) ? cleaned : null
+}
+
+// Backticked paths on one line — the shared extraction rule for every section
+// that lists files (plan Affected files, plan Subtasks). One rule, or the
+// validators comparing those sections against each other drift apart.
+export function backtickPaths(line) {
+  return [...line.matchAll(/`([^`]+)`/g)].map(m => cleanPath(m[1])).filter(Boolean)
+}
+
 // Paths mentioned in a section: backticked tokens and bare path-like words.
 // A line annotated "(new)" lists a file the plan will CREATE — exempt from
 // existence checks. Trailing :123 line references are stripped.
@@ -60,8 +93,8 @@ export function pathsInSection(text) {
       }
     }
     for (const token of tokens) {
-      const cleaned = token.replace(/:\d+(-\d+)?$/, '').trim()
-      if (cleaned.includes('/') || /\.\w+$/.test(cleaned)) paths.push({ path: cleaned, isNew })
+      const cleaned = cleanPath(token)
+      if (cleaned) paths.push({ path: cleaned, isNew })
     }
   }
   return paths

@@ -3,7 +3,8 @@ import { readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
-import { cli, completeArtifact, installProfile, readState, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
+import { writeState } from '../src/state.js'
+import { CLEAN_REVIEW_COUNTS, STANDARD_PROFILE, cli, completeArtifact, contextSections, installProfile, readState, sandbox, standardRepo } from './helpers.js'
 
 test('validateProfile: catches structural errors, warns on soft gaps', () => {
   assert.deepEqual(validateProfile(null).errors.length > 0, true)
@@ -62,7 +63,7 @@ test('feedback + abort + show, and metrics reflect them', () => {
 
   // drive one gate with an edit, so metrics has a gate_edit to report
   completeArtifact(runDir, 'artifacts/01-context.md', 'F-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
+    contextSections())
   assert.equal(run(['advance']).verdict, 'GATE')
   assert.equal(run(['approve', '--edited', '--note', 'tightened criteria']).stage, 'PLAN')
 
@@ -109,7 +110,7 @@ test('request-changes: records the correction, reopens the stage, feeds human_ro
   assert.equal(run(['request-changes', '--note', 'too early']).verdict, 'ERROR')
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'RC-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
+    contextSections())
   assert.equal(run(['advance']).verdict, 'GATE')
 
   const rc = run(['request-changes', '--note', 'criterion 1 is wrong'])
@@ -130,6 +131,33 @@ test('request-changes: records the correction, reopens the stage, feeds human_ro
   assert.equal(m.human_rounds, 1, 'one correction = one human round')
 })
 
+test('advance never double-claims a branch another active run recorded', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'br-repo')
+  installProfile(home, 'example.com-test-br-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  run(['new-run', 'BR-1'])
+  run(['new-run', 'BR-2'])
+  const dirA = path.join(home, 'repos', 'example.com-test-br-repo', 'runs', 'BR-1')
+  const dirB = path.join(home, 'repos', 'example.com-test-br-repo', 'runs', 'BR-2')
+
+  // BR-1 already owns 'shared-branch'.
+  const stateA = readState(dirA)
+  stateA.git.branch = 'shared-branch'
+  writeState(dirA, stateA)
+
+  // Advancing BR-2 with BR-1's branch checked out must NOT record it —
+  // two runs claiming one branch would make the guard's resolution ambiguous.
+  repo.git('checkout', '-qb', 'shared-branch')
+  run(['advance', '--run', 'BR-2'])
+  assert.equal(readState(dirB).git.branch, null, "BR-2 must not claim BR-1's branch")
+
+  // On an unclaimed branch it records normally.
+  repo.git('checkout', '-qb', 'br-2-branch')
+  run(['advance', '--run', 'BR-2'])
+  assert.equal(readState(dirB).git.branch, 'br-2-branch')
+})
+
 test('reopen: backward-only, drops later gates, resets downstream artifacts to draft', () => {
   const { root, home } = sandbox()
   const repo = standardRepo(root, 'reopen-repo')
@@ -139,7 +167,7 @@ test('reopen: backward-only, drops later gates, resets downstream artifacts to d
   const ac = (rel, stage, secs, extra) => completeArtifact(runDir, rel, 'RE-1', stage, secs, extra)
 
   run(['new-run', 'RE-1'])
-  ac('artifacts/01-context.md', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
+  ac('artifacts/01-context.md', 'CONTEXT', contextSections())
   run(['advance']); run(['approve'])
   ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only — `src/app.sh`', 'Testing strategy': 't', 'Open questions': 'None.' })
   run(['advance']); run(['approve'])
@@ -149,7 +177,7 @@ test('reopen: backward-only, drops later gates, resets downstream artifacts to d
   run(['advance']); assert.equal(run(['approve']).stage, 'TEST')
   ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' })
   run(['advance']); assert.equal(run(['approve']).stage, 'REVIEW')
-  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }')
+  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, CLEAN_REVIEW_COUNTS)
   run(['advance']); assert.equal(run(['approve']).stage, 'PR')
 
   // At PR, a late one-line change is needed → reopen IMPLEMENT.

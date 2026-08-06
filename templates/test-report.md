@@ -26,12 +26,16 @@ status: draft
      | `app/x.rb` | `spec/x_spec.rb` | none / what's uncovered | -->
 
 ## Risk-to-test map
-<!-- A table, one row per plan risk. Columns: Risk | Test | Coverage.
-     EVERY risk from the plan's '## Risks' appears here — Coverage is
-     'covered' / 'not tested because X' / 'n/a'. Nothing silently dropped.
+<!-- A table, one row per plan risk AND one per acceptance criterion.
+     Columns: Risk | Test | Coverage. EVERY risk from the plan's '## Risks'
+     appears here, and EVERY acceptance criterion referenced by id as AC#<n>
+     (machine-checked: ac_traceability blocks on any AC#<n> missing from this
+     map and from '## Deferred'). Coverage is 'covered' /
+     'not tested because X' / 'n/a'. Nothing silently dropped.
      | Risk | Test | Coverage |
      |------|------|----------|
-     | plan risk (same wording) | the test that pins it | covered | -->
+     | plan risk (same wording) | the test that pins it | covered |
+     | AC#1 — what must be true | the test that proves it | covered | -->
 
 ## Added tests
 <!-- Tests written/extended in this stage. Only green tests are presented. -->

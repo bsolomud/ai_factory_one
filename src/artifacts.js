@@ -33,6 +33,19 @@ export function sections(body) {
   return out
 }
 
+// Numbered acceptance-criteria ids from a context artifact body: table rows
+// (| 1 | ... |) or numbered list items. These ids are the traceability keys —
+// the plan and the test report reference them as AC#<n>.
+export function acceptanceCriteriaIds(body) {
+  const section = sections(body)['Acceptance criteria'] ?? ''
+  const ids = []
+  for (const line of section.split('\n')) {
+    const m = line.match(/^\s*\|\s*(\d+)\s*\|/) || line.match(/^\s*(\d+)[.)]\s/)
+    if (m) ids.push(parseInt(m[1], 10))
+  }
+  return ids
+}
+
 // Paths mentioned in a section: backticked tokens and bare path-like words.
 // A line annotated "(new)" lists a file the plan will CREATE — exempt from
 // existence checks. Trailing :123 line references are stripped.

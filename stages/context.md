@@ -17,7 +17,7 @@ review it and continue — do not assume a clean slate.
 
 ## Output
 `artifacts/01-context.md` (template pre-copied). Required sections:
-Requirements, Acceptance criteria, Findings, Open questions.
+Requirements, Acceptance criteria, Decisions, Findings, Open questions.
 
 ## Procedure
 - Restate requirements in your own words; note what the task does NOT say.
@@ -28,6 +28,12 @@ Requirements, Acceptance criteria, Findings, Open questions.
 - From their answers, write `## Acceptance criteria` as a table
   (# | Criterion | Verified by): numbered, each independently checkable —
   these drive the plan's testing strategy and QA's audit later.
+- Resolve `## Decisions` WITH the developer — scope boundary (fix-here vs
+  root-cause), product-intent ambiguities, secrets/config policy (what may
+  carry a committed default vs must be ENV-injected), migration/rollout, and
+  the explicit out-of-scope list. Every decision that surfaces later instead
+  (at REVIEW or PR) costs a whole reopen cycle; ask NOW, in the same question
+  batch. 'N/A — <why>' rows are fine; empty rows are not.
 - Questions they could not answer now: record under `## Open questions`,
   split **Blocking** vs **Non-blocking** (state the assumption you proceed with).
 - Do not design a solution here — that is PLAN's job.

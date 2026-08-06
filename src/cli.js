@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
-import { loadProfile, validateProfile, untrackedFiles } from './profile.js'
+import { currentBranch, loadProfile, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { parseArtifact } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -167,7 +167,9 @@ const commands = {
       state.autonomy = flags.autonomy
     }
     writeState(runDir, state)
-    appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked.length })
+    // The full file list (not just a count) so a rebuilt state.json restores the
+    // ambient baseline — otherwise a crash would re-flag the developer's scratch.
+    appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked })
     return emit({
       verdict: 'CREATED',
       run: runId,
@@ -188,14 +190,25 @@ const commands = {
     }
     const stageName = state.stage
     const stageDef = config.stages[stageName]
+    // Record the run's working branch the first time one exists (created at
+    // BREAKDOWN). With several runs active in one clone, the guard resolves
+    // WHICH run the developer is in by this branch — it must never guess.
+    if (!state.git.branch) {
+      const branch = currentBranch(ctx.repoDir)
+      if (branch && branch !== state.git.base) {
+        state.git.branch = branch
+        appendEvent(runDir, { event: 'branch_recorded', branch })
+      }
+    }
     const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
-    for (const u of result.unverified) if (!state.unverified.includes(u)) state.unverified.push(u)
+    const unverifiedTexts = result.unverified.map(u => u.text)
+    for (const t of unverifiedTexts) if (!state.unverified.includes(t)) state.unverified.push(t)
     if (!result.ok) {
       appendEvent(runDir, { event: 'blocked', stage: stageName, reasons: result.reasons.length })
       writeState(runDir, state)
-      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: result.unverified }, 1)
+      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: unverifiedTexts }, 1)
     }
-    for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u })
+    for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u.text, kind: u.kind })
     const gate = stageDef.gate || { required: false }
     if (!gate.required) {
       return emit(transition(runDir, config, state, { by: 'none' }))
@@ -227,6 +240,29 @@ const commands = {
     if (flags.express) state.autonomy = 'express' // shortcut: pick Fast fix at this gate
     if (flags.gated) state.autonomy = 'gated'
     return emit(approveGate(runDir, config, state, { by: flags.by || 'human', note: flags.note || '', edited: !!flags.edited }))
+  },
+
+  // The developer said "no / change this" at a gate. Records the correction
+  // (the round the pilot is trying to drive to zero — see human_rounds in
+  // metrics) and reopens the stage for rework; advance re-validates and
+  // re-gates. Without this event, corrections are invisible: the redo would
+  // hide inside the same awaiting_gate window and metrics would read clean.
+  'request-changes'(positional, flags) {
+    const { config, runDir, state } = loadRun(flags)
+    if (state.stage === 'DONE') return emit({ verdict: 'ERROR', error: 'run already complete' }, 1)
+    if (state.stage_status !== 'awaiting_gate') {
+      return emit({ verdict: 'ERROR', error: `nothing awaiting approval — stage ${state.stage} is ${state.stage_status}; change requests happen at a gate (for a late change after approval, use 'pipeline reopen')` }, 1)
+    }
+    const note = positional.join(' ').trim() || flags.note || ''
+    state.stage_status = 'in_progress'
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'change_requested', stage: state.stage, subtask: state.substate.subtask ?? undefined, note })
+    return emit({
+      verdict: 'CHANGES_REQUESTED',
+      stage: state.stage,
+      stage_prompt: paths.asset(config.stages[state.stage].prompt),
+      next_action: `stage ${state.stage} reopened for rework — dispatch the developer's change (their words: "${note}") to the stage's agent, then 'pipeline advance' re-validates and re-gates.`
+    })
   },
 
   'set-autonomy'(positional, flags) {
@@ -422,7 +458,7 @@ const commands = {
     const before = state.git?.baseline_untracked?.length ?? 0
     const files = untrackedFiles(ctx.repoDir)
     state.git.baseline_untracked = files
-    appendEvent(runDir, { event: 'baseline_untracked', count: files.length })
+    appendEvent(runDir, { event: 'baseline_untracked', count: files.length, files })
     writeState(runDir, state)
     return emit({
       verdict: 'OK',

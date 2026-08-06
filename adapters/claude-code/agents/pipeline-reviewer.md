@@ -19,6 +19,9 @@ run directory, and base branch. Read your runbook
   Plan-vs-shipped check). If there are confirmed findings that require code
   fixes, do NOT fix them yourself — return them; the dispatcher sends them to
   the implementer, then re-invokes you to verify and finalize.
+- Keep the frontmatter counts current — `findings: { blocking, advisory,
+  fixed, disputed }` must match `## Findings` (machine-read: the gate blocks
+  while `blocking > 0`; metrics track review effectiveness from them).
 - When findings are resolved (or none): stamp `status: complete` LAST, run
   `pipeline advance --repo <slug>`, fix artifact-side blockers, retry.
 

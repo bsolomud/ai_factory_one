@@ -15,8 +15,11 @@ under `## Deviations`.
 0. Sanity-check the plan's decomposition before transcribing: if a subtask makes
    a breaking change (API / model / signature / migration) whose adapting spec
    lives in a *different* subtask, that subtask cannot pass its own green-test
-   gate (see plan.md "Decomposition rules"). Do NOT silently merge or reorder —
-   STOP and flag it to the developer as a required plan amendment.
+   gate (see plan.md "Decomposition rules"). The `subtask_coupling` validator
+   re-checks the file↔spec split mechanically at this stage's `advance`, but it
+   only sees declared Files — judgment-level splits are still yours to catch.
+   Do NOT silently merge or reorder — STOP and flag it to the developer as a
+   required plan amendment.
 1. Fill `03-progress.md` as above; set `status: complete` LAST.
 2. Initialize the cursor: `pipeline set-substate subtask=1 of=<N>` where N is
    the plan's subtask count.

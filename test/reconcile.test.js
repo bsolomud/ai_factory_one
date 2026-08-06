@@ -57,6 +57,32 @@ test('rebuild: substate counters restored from events', () => {
   assert.equal(state.substate.of, 3)
 })
 
+test('rebuild: working branch and ambient baseline restored from events', () => {
+  const { root } = sandbox()
+  const runDir = path.join(root, 'run')
+  fs.mkdirSync(path.join(runDir, 'artifacts'), { recursive: true })
+  appendEvent(runDir, { event: 'run_created', run: 'T-1', base: 'master', baseline_untracked: ['scratch.md', 'notes/todo.txt'] })
+  appendEvent(runDir, { event: 'branch_recorded', branch: 'T-1' })
+  const { state } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
+  assert.equal(state.git.branch, 'T-1')
+  assert.deepEqual(state.git.baseline_untracked, ['scratch.md', 'notes/todo.txt'])
+
+  // A later ignore-untracked re-snapshot wins over the run_created baseline.
+  appendEvent(runDir, { event: 'baseline_untracked', count: 1, files: ['scratch.md'] })
+  fs.rmSync(path.join(runDir, 'state.json'))
+  const again = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
+  assert.deepEqual(again.state.git.baseline_untracked, ['scratch.md'])
+})
+
+test('rebuild: pre-list-format events (count-only baseline) restore an empty baseline, not a crash', () => {
+  const { root } = sandbox()
+  const runDir = path.join(root, 'run')
+  fs.mkdirSync(path.join(runDir, 'artifacts'), { recursive: true })
+  appendEvent(runDir, { event: 'run_created', run: 'T-1', base: 'master', baseline_untracked: 30 })
+  const { state } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
+  assert.deepEqual(state.git.baseline_untracked, [])
+})
+
 test('corrupt state.json is replaced, not fatal', () => {
   const { root } = sandbox()
   const runDir = scaffoldRun(root)

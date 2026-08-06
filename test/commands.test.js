@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
@@ -62,7 +62,7 @@ test('feedback + abort + show, and metrics reflect them', () => {
 
   // drive one gate with an edit, so metrics has a gate_edit to report
   completeArtifact(runDir, 'artifacts/01-context.md', 'F-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': '1. x', Findings: 'f', 'Open questions': 'None.' })
+    { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
   assert.equal(run(['advance']).verdict, 'GATE')
   assert.equal(run(['approve', '--edited', '--note', 'tightened criteria']).stage, 'PLAN')
 
@@ -97,26 +97,59 @@ test('metrics --all: org-wide rollup across every known repo, no repo context ne
   assert.equal(all.org.low_sample, false, '3 runs meets the trend threshold')
 })
 
+test('request-changes: records the correction, reopens the stage, feeds human_rounds', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'rc-repo')
+  installProfile(home, 'example.com-test-rc-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  const runDir = path.join(home, 'repos', 'example.com-test-rc-repo', 'runs', 'RC-1')
+  run(['new-run', 'RC-1'])
+
+  // Not at a gate yet → error with guidance.
+  assert.equal(run(['request-changes', '--note', 'too early']).verdict, 'ERROR')
+
+  completeArtifact(runDir, 'artifacts/01-context.md', 'RC-1', 'CONTEXT',
+    { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
+  assert.equal(run(['advance']).verdict, 'GATE')
+
+  const rc = run(['request-changes', '--note', 'criterion 1 is wrong'])
+  assert.equal(rc.verdict, 'CHANGES_REQUESTED')
+  assert.equal(readState(runDir).stage_status, 'in_progress', 'stage reopened for rework')
+
+  // Crash after the change request → reconcile must NOT wedge back to awaiting_gate.
+  rmSync(path.join(runDir, 'state.json'))
+  const status = run(['status'])
+  assert.equal(status.stage, 'CONTEXT')
+  assert.equal(status.stage_status, 'in_progress', 'rebuilt state honors the declined gate')
+
+  // Rework done → advance re-gates → approve; the correction is counted.
+  assert.equal(run(['advance']).verdict, 'GATE')
+  assert.equal(run(['approve', '--note', 'better now']).stage, 'PLAN')
+  const m = run(['metrics', '--run', 'RC-1'])
+  assert.equal(m.change_requests, 1)
+  assert.equal(m.human_rounds, 1, 'one correction = one human round')
+})
+
 test('reopen: backward-only, drops later gates, resets downstream artifacts to draft', () => {
   const { root, home } = sandbox()
   const repo = standardRepo(root, 'reopen-repo')
   installProfile(home, 'example.com-test-reopen-repo', STANDARD_PROFILE)
   const run = a => cli(a, { home, cwd: repo.dir })
   const runDir = path.join(home, 'repos', 'example.com-test-reopen-repo', 'runs', 'RE-1')
-  const ac = (rel, stage, secs) => completeArtifact(runDir, rel, 'RE-1', stage, secs)
+  const ac = (rel, stage, secs, extra) => completeArtifact(runDir, rel, 'RE-1', stage, secs, extra)
 
   run(['new-run', 'RE-1'])
-  ac('artifacts/01-context.md', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. x', Findings: 'f', 'Open questions': 'None.' })
+  ac('artifacts/01-context.md', 'CONTEXT', { Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
   run(['advance']); run(['approve'])
-  ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only', 'Testing strategy': 't', 'Open questions': 'None.' })
+  ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only — `src/app.sh`', 'Testing strategy': 't', 'Open questions': 'None.' })
   run(['advance']); run(['approve'])
   ac('artifacts/03-progress.md', 'BREAKDOWN', { Subtasks: '- [ ] 1. only', Deviations: 'None.' })
   run(['set-substate', 'subtask=1', 'of=1']); run(['advance']); run(['approve'])
   repo.git('checkout', '-qb', 'RE-1'); repo.write('src/app.sh', 'echo v2\n'); repo.git('add', '-A'); repo.git('commit', '-qm', 's1')
   run(['advance']); assert.equal(run(['approve']).stage, 'TEST')
-  ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'm', 'Added tests': 'n', Deferred: 'None.' })
+  ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' })
   run(['advance']); assert.equal(run(['approve']).stage, 'REVIEW')
-  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' })
+  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }')
   run(['advance']); assert.equal(run(['approve']).stage, 'PR')
 
   // At PR, a late one-line change is needed → reopen IMPLEMENT.

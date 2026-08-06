@@ -34,6 +34,9 @@ Disputed, Plan-vs-shipped check.
 
 ## Done when
 Fill the BLUF header at the top (Outcome APPROVE/CHANGES, Blocking count, TL;DR,
-Needs you) reflecting the latest round. Artifact complete, fixes committed,
+Needs you) reflecting the latest round, and set the frontmatter counts —
+`findings: { blocking, advisory, fixed, disputed }` — to match `## Findings`
+(machine-read: the gate blocks while `blocking > 0`; metrics track review
+effectiveness from these). Artifact complete, fixes committed,
 checks green via `pipeline advance`;
 present findings summary and STOP.

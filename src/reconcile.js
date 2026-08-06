@@ -62,9 +62,15 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   const events = readEvents(runDir)
   const gates = events.filter(e => e.event === 'gate_approved')
     .map(e => ({ stage: e.stage, subtask: e.subtask ?? null, approved: true, by: e.by || 'human', at: e.at, note: e.note || '' }))
-  const base = events.find(e => e.event === 'run_created')?.base || 'master'
+  const created = events.find(e => e.event === 'run_created')
+  const base = created?.base || 'master'
+  const branch = events.filter(e => e.event === 'branch_recorded').at(-1)?.branch || null
+  // Ambient baseline: the latest snapshot wins (ignore-untracked re-snapshots);
+  // pre-list-events runs recorded only a count — tolerate that, restore nothing.
+  const baselineEvent = events.filter(e => e.event === 'baseline_untracked').at(-1)
+  const baselineUntracked = [baselineEvent?.files, created?.baseline_untracked].find(Array.isArray) || []
 
-  const state = newState({ runId, repo: repoSlug, stage: config.first, base })
+  const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked })
   state.gates = gates
 
   if (lastComplete) {
@@ -78,6 +84,20 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
       state.stage = lastComplete
       state.stage_status = 'awaiting_gate'
     }
+  }
+  // A change request at the gate reopens the stage for rework: if the stage's
+  // latest change_requested is newer than its latest validated event, the
+  // rebuilt run is back in_progress — not wedged awaiting a gate that the
+  // developer already declined.
+  if (state.stage_status === 'awaiting_gate') {
+    let lastValidated = -1
+    let lastChangeReq = -1
+    events.forEach((e, i) => {
+      if (e.stage !== state.stage) return
+      if (e.event === 'validated') lastValidated = i
+      if (e.event === 'change_requested') lastChangeReq = i
+    })
+    if (lastChangeReq > lastValidated) state.stage_status = 'in_progress'
   }
   // Restore substate counters from the last recorded substate events.
   for (const e of events) {

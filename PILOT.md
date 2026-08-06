@@ -54,6 +54,7 @@ After a few tickets: `/pipeline metrics` (per repo). The headline numbers:
 
 | Metric | What it tells you | Good direction |
 | --- | --- | --- |
+| `human_rounds` | corrections per run (edited gates + change requests + reopens) — **the pilot target: ≤3, trending to 0** | lower |
 | `first_pass_green_rate` | share of stages that passed validators with no retry | higher |
 | `gate_edit_rate` | share of gates where you had to change the artifact | lower |
 | `blocked_by_stage` | where the AI most often fails the checks | find the hot spot |

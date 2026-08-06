@@ -232,7 +232,10 @@ Own agent, interactive via two phases:
    `pipeline approve --note "<their words>"`. If the developer changed the
    artifact (or asked you to) before approving, add `--edited` — this feeds
    the gate-edit-rate quality metric, so be honest about it.
-4. No / change request → dispatch the change to the stage's agent, re-present.
+4. No / change request → FIRST record it: `pipeline request-changes --note
+   "<their words>"` (reopens the stage and feeds the human_rounds metric —
+   an unrecorded correction reads as a clean run), THEN dispatch the change
+   to the stage's agent, `pipeline advance`, re-present.
 NEVER approve otherwise — not to unblock yourself, not because it "looks
 trivial", never bundled with another command. Every approval is audited.
 
@@ -243,9 +246,10 @@ Run the matching CLI command and present for humans:
   checks, reconcile notes, exact next step (`show` also returns the current
   artifact body for review).
 - **repos** — repos the pipeline knows and their active runs.
-- **metrics** — pilot numbers (first-pass-green rate, gate-edit rate, blocked
-  histogram, critic rounds, agents spawned, feedback notes). Present the
-  headline rates and say what they imply.
+- **metrics** — pilot numbers (human rounds — THE target, corrections per
+  run; first-pass-green rate, gate-edit rate, blocked histogram, critic
+  rounds, agents spawned, feedback notes). Present the headline rates and say
+  what they imply.
 - **doctor** — validates the repo profile; relay errors/warnings plainly.
 
 ## `/pipeline feedback "<note>"`

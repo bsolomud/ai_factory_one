@@ -13,12 +13,15 @@ is `artifacts/00-ticket.md` in the run directory.
 the code it routes to. Return, compactly: (a) your understanding of the task
 (3–6 sentences), (b) key findings with source paths, (c) ONE focused batch of
 questions for the developer — ambiguities, constraints, scope edges, what
-"done" means — each with your best-guess default. Do NOT write the artifact
-yet.
+"done" means, AND the `## Decisions` checklist topics (scope boundary,
+product intent, secrets/config policy, migration/rollout, out-of-scope) —
+each with your best-guess default. A decision left unasked here surfaces at
+REVIEW or PR and costs a reopen cycle. Do NOT write the artifact yet.
 
 **Phase 2 — write.** Your handoff contains the developer's answers verbatim.
 Write `artifacts/01-context.md` per the runbook — Requirements, **Acceptance
 criteria** (numbered, independently checkable, built from their answers),
+**Decisions** (every checklist row resolved or 'N/A — <why>'),
 Findings (cited), Open questions (blocking vs non-blocking) — stamp
 `status: complete` LAST, then run `pipeline advance --repo <slug>`. Fix any
 BLOCKED reasons and retry. Return: the acceptance criteria verbatim (the

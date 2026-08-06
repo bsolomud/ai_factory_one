@@ -55,9 +55,12 @@ export function cli(args, { home, cwd }) {
 }
 
 // Write an artifact with completed frontmatter + given sections (fake stage work).
-export function completeArtifact(runDir, rel, run, stage, sections) {
+// extraFrontmatter: raw YAML lines appended to the frontmatter (e.g. the review
+// artifact's machine-read findings counts).
+export function completeArtifact(runDir, rel, run, stage, sections, extraFrontmatter = '') {
+  const extra = extraFrontmatter ? `${extraFrontmatter.trim()}\n` : ''
   const body = Object.entries(sections).map(([name, text]) => `## ${name}\n${text}\n`).join('\n')
-  writeFile(runDir, rel, `---\nrun: ${run}\nstage: ${stage}\nstatus: complete\n---\n\n${body}`)
+  writeFile(runDir, rel, `---\nrun: ${run}\nstage: ${stage}\nstatus: complete\n${extra}---\n\n${body}`)
 }
 
 export function readState(runDir) {

@@ -42,7 +42,15 @@ choices rest on curated docs vs inference. -->
 
 
 ## Subtasks
-<!-- Numbered. Each small enough to review as ONE diff and commit. -->
+<!-- A table, one row per subtask. Columns: # | Subtask | Files.
+     Files = this subtask's slice of '## Affected files' (backticked,
+     comma-separated). Machine-checked (subtask_coupling): every affected file
+     belongs to exactly ONE subtask, and a source file plus the spec it breaks
+     must be in the SAME subtask — advance gates each subtask on green.
+     Each subtask small enough to review as ONE diff and commit.
+     | # | Subtask | Files |
+     |---|---------|-------|
+     | 1 | what lands | `app/x.rb`, `spec/x_spec.rb` | -->
 
 ## Testing strategy
 <!-- Per subtask: which test type and why, per the repo's conventions. -->

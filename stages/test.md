@@ -16,7 +16,9 @@ Risk-to-test map, Added tests, Deferred.
 ## Procedure (executed by `pipeline-qa`, fresh context)
 - Audit coverage against the branch diff; build the risk-to-test map as a table
   (every plan risk AND every acceptance criterion → a named test or `not tested
-  because <reason>`); write the justified missing tests in the repo's own
+  because <reason>`); reference criteria by id as `AC#<n>` — `advance`
+  machine-checks that every AC#<n> from the context appears in the map or
+  under `## Deferred`. Write the justified missing tests in the repo's own
   style; screen them for flakiness; only green work is presented.
 - Write the results into `04-test-report.md`; deferred edge cases go under
   `## Deferred` — the developer sees them at the gate; recorded, not dropped.

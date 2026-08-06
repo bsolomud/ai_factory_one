@@ -2,6 +2,9 @@
 run: __RUN__
 stage: __STAGE__
 status: draft
+# Machine-read by review_counts (gate) and metrics — keep consistent with
+# '## Findings'. blocking must reach 0 (fixed or moved to Disputed) to advance.
+findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }
 ---
 
 # Pre-PR Review — __RUN__

@@ -6,7 +6,17 @@ helps. Read this once before your first ticket.
 ## Before the pilot (one-time setup)
 
 1. **Install**: `./install.sh --claude` (from this repo). Open a NEW Claude
-   Code session afterward so the skill and hooks load.
+   Code session afterward so the skill and hooks load. Optionally add the
+   code-graph addon — `./install.sh --claude --with=codebase-memory-mcp` —
+   then index each pilot repo once (one repo at a time, not a parent folder):
+   `codebase-memory-mcp cli index_repository --repo-path <repo>` (the
+   background watcher keeps the index fresh after that). If your shell says
+   `command not found`, the binary is in `~/.local/bin` — not on the default
+   macOS PATH; add it (`export PATH="$HOME/.local/bin:$PATH"` in your shell
+   profile) or call it by full path. Claude sessions work either way. To measure whether
+   it earns its keep, compare correction rounds and plan-boundary misses
+   (`pipeline metrics`) on tickets run with vs without the index — it targets
+   exactly the incomplete-Affected-files / phantom-symbol defect classes.
 2. **Onboard each pilot repo**: in a session, `/pipeline onboard <path>`.
    Answer the interview; choose skill bindings (use-repo / use-built-in /
    both per capability). Confirm the profile.

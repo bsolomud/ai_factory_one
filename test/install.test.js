@@ -77,6 +77,68 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
   assert.equal(JSON.parse(out).verdict, 'NO_PROFILE')
 })
 
+test('install.sh --with addons: unknown addon fails; codebase-memory-mcp is idempotent; uninstall unmerges rules only', () => {
+  const { root } = sandbox()
+  const home = path.join(root, 'pipeline-home')
+  const claude = path.join(root, 'claude-home')
+  const claudeJson = path.join(root, 'claude.json') // stand-in for ~/.claude.json
+  const settingsPath = path.join(claude, 'settings.json')
+
+  // Fake upstream binary on PATH — the addon must detect it and NEVER curl.
+  const fakeBin = path.join(root, 'fake-bin')
+  fs.mkdirSync(fakeBin, { recursive: true })
+  const shim = path.join(fakeBin, 'codebase-memory-mcp')
+  fs.writeFileSync(shim, '#!/usr/bin/env bash\necho fake-1.0.0\n')
+  fs.chmodSync(shim, 0o755)
+
+  const env = {
+    AI_FACTORY_HOME: home,
+    CLAUDE_HOME: claude,
+    CLAUDE_JSON: claudeJson,
+    PATH: `${fakeBin}:${process.env.PATH}`
+  }
+
+  // Unknown addon → hard error that names the problem.
+  assert.throws(
+    () => install({ ...env, PIPELINE_ADDONS: 'no-such-addon' }),
+    err => /unknown addon 'no-such-addon'/.test(String(err.stderr)),
+    'unknown addon must fail loudly'
+  )
+
+  install({ ...env, PIPELINE_ADDONS: 'codebase-memory-mcp' })
+
+  // Exactly the read-only tool set is allow-listed; mutating tools never are.
+  const allow = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).permissions.allow
+  for (const tool of ['index_status', 'list_projects', 'get_architecture', 'search_graph',
+                      'search_code', 'trace_path', 'get_code_snippet', 'detect_changes']) {
+    assert.ok(allow.includes(`mcp__codebase-memory-mcp__${tool}`), `${tool} allowed`)
+  }
+  for (const tool of ['index_repository', 'delete_project', 'manage_adr', 'ingest_traces', 'query_graph']) {
+    assert.ok(!allow.includes(`mcp__codebase-memory-mcp__${tool}`), `${tool} must NOT be allow-listed`)
+  }
+
+  // MCP registration written (binary was pre-installed, so the addon registers it).
+  const reg = JSON.parse(fs.readFileSync(claudeJson, 'utf8'))
+  assert.equal(reg.mcpServers['codebase-memory-mcp'].command, shim, 'MCP entry points at the binary')
+
+  // Idempotent: re-run leaves both files byte-identical (skip paths taken).
+  const settingsBefore = fs.readFileSync(settingsPath, 'utf8')
+  const regBefore = fs.readFileSync(claudeJson, 'utf8')
+  const out = install({ ...env, PIPELINE_ADDONS: 'codebase-memory-mcp' })
+  assert.match(out, /already installed/, 'binary install skipped on re-run')
+  assert.equal(fs.readFileSync(settingsPath, 'utf8'), settingsBefore, 'settings unchanged on re-run')
+  assert.equal(fs.readFileSync(claudeJson, 'utf8'), regBefore, 'registration unchanged on re-run')
+
+  // Uninstall removes ONLY our mcp rules; binary + registration are left (user-level tool).
+  uninstall(env)
+  const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+  assert.ok(!(after.permissions?.allow || []).some(r => r.startsWith('mcp__codebase-memory-mcp__')),
+    'addon permission rules removed')
+  assert.ok(JSON.parse(fs.readFileSync(claudeJson, 'utf8')).mcpServers['codebase-memory-mcp'],
+    'MCP registration left in place')
+  assert.ok(fs.existsSync(shim), 'binary left in place')
+})
+
 test('uninstall.sh: reverses install, keeps user work by default, purges on --purge', () => {
   const { root } = sandbox()
   const home = path.join(root, 'pipeline-home')

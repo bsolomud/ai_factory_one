@@ -33,6 +33,14 @@ fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTINGS="$CLAUDE_DIR/settings.json" GUARD_BIN="$PIPELINE_HOME/bin/guard" node "$HERE/unmerge-settings.cjs" || true
 
+# 3b. Addon unmerges: each addon removes ONLY the settings.json rules it
+#     merged. Addon binaries and ~/.claude.json MCP registrations stay — they
+#     are user-level tools, usable outside the pipeline.
+for addon_merge in "$HERE"/addons/*/merge-permissions.cjs; do
+  [ -f "$addon_merge" ] || continue
+  SETTINGS="$CLAUDE_DIR/settings.json" node "$addon_merge" unmerge || true
+done
+
 # 4. Remove the pipeline home. Keep repos/ (your work) unless --purge.
 if [ -d "$PIPELINE_HOME" ]; then
   if [ "$PURGE" = "1" ]; then

@@ -7,7 +7,9 @@ import { PACKAGE_ROOT } from './helpers.js'
 // The global layer (state graph + stage runbooks) may reference capability
 // slots ONLY. The moment it names a concrete tool, "repo-agnostic" starts
 // rotting into "works on one repo" — this test is the plan's P0.9 lint.
-const FORBIDDEN = /\b(rubocop|rspec|haml-lint|brakeman|eslint|stylelint|prettier|jest|vitest|mocha|pytest|flake8|mypy|phpunit|golangci|gofmt|cargo (test|clippy)|bundle exec|rake|yarn|npm (run|test)|pnpm|mvn|gradle)\b/i
+// MCP servers count as concrete tools: their names (and mcp__ tool ids) live
+// in the host adapter (agents/, addons/), never in stages/ or pipeline.yml.
+const FORBIDDEN = /\b(rubocop|rspec|haml-lint|brakeman|eslint|stylelint|prettier|jest|vitest|mocha|pytest|flake8|mypy|phpunit|golangci|gofmt|cargo (test|clippy)|bundle exec|rake|yarn|npm (run|test)|pnpm|mvn|gradle)\b|codebase-memory|mcp__/i
 
 test('pipeline.yml and stages/ name no concrete tools', () => {
   const files = [

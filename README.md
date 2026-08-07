@@ -40,6 +40,33 @@ the `/pipeline` skill, the nine specialist agents (**onboarder, context,
 planner, architect, critic, implementer, qa, reviewer, stage-runner**), and
 the gate-guard hooks.
 
+### Addons
+
+```bash
+./install.sh --claude --with=codebase-memory-mcp
+```
+
+Optional third-party integrations live under `adapters/claude-code/addons/`;
+`--with` takes a comma-separated list. Every addon is idempotent — an
+already-installed binary or an already-merged setting is detected and
+skipped, so `--with` is safe to repeat on every update.
+
+**codebase-memory-mcp** ([DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp))
+gives the research agents (context, planner, architect, critic, reviewer, qa)
+a local code graph: call-chain tracing, symbol search, diff→affected-symbols
+mapping. The addon installs the upstream binary, registers the MCP server in
+`~/.claude.json`, and pre-approves ONLY its read-only query tools. Index each
+repo once (`codebase-memory-mcp cli index_repository --repo-path <repo>` —
+one repo at a time, not a parent folder); the background watcher keeps the
+index fresh. Agents fall back to plain grep when a repo isn't indexed, so
+nothing breaks without it.
+
+> **`command not found` after installing?** The upstream installer puts the
+> binary in `~/.local/bin`, which is NOT on the default macOS PATH. Claude
+> sessions are unaffected (the MCP registration uses the absolute path);
+> for your own shell run:
+> `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile && source ~/.bash_profile`
+
 ### Uninstall
 
 ```bash
@@ -53,6 +80,9 @@ removes only *our* guard hooks from `settings.json` (your other hooks and
 settings are untouched), and deletes the framework files from
 `~/.ai_factory_one/`. By default your work under `~/.ai_factory_one/repos/`
 (profiles, runs, learned knowledge) is preserved; `--purge` deletes that too.
+Addon permission rules are unmerged as well; addon binaries and their MCP
+registrations are left installed — they are user-level tools, usable outside
+the pipeline.
 
 **Context isolation by design**: your main session is only a dispatcher —
 your conversation never leaks into the agents, and their work never floods

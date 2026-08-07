@@ -47,4 +47,22 @@ done
 # PIPE_BUF (512) bytes, any heredoc bigger than that deadlocks the installer.
 SETTINGS="$CLAUDE_DIR/settings.json" PIPELINE_HOME="$PIPELINE_HOME" node "$PACKAGE_ROOT/adapters/claude-code/merge-settings.cjs"
 
+# 5. Addons (opt-in via --with=<name>[,<name>...] on install.sh). Each addon is
+#    a self-contained idempotent script; unknown names fail loudly. Addons run
+#    AFTER the core merge so settings.json is guaranteed to exist.
+if [ -n "${PIPELINE_ADDONS:-}" ]; then
+  ADDON_ROOT="$PACKAGE_ROOT/adapters/claude-code/addons"
+  IFS=',' read -r -a ADDON_NAMES <<< "$PIPELINE_ADDONS"
+  for name in "${ADDON_NAMES[@]}"; do
+    [ -z "$name" ] && continue
+    if [ ! -f "$ADDON_ROOT/$name/install.sh" ]; then
+      echo "unknown addon '$name' — available: $(ls "$ADDON_ROOT" 2>/dev/null | tr '\n' ' ')" >&2
+      exit 1
+    fi
+    echo "→ addon: $name"
+    PACKAGE_ROOT="$PACKAGE_ROOT" PIPELINE_HOME="$PIPELINE_HOME" CLAUDE_DIR="$CLAUDE_DIR" \
+      bash "$ADDON_ROOT/$name/install.sh"
+  done
+fi
+
 echo "installed. Try: /pipeline in any repo (new Claude Code session)."

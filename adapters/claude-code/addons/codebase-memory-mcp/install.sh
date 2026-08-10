@@ -21,6 +21,19 @@ else
   curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
 fi
 
+# 1b. Hooks: deploy heredoc-free versions OVER the upstream ones. Upstream's
+#    SessionStart reminder feeds a >512-byte heredoc through cat — bash 5.2 +
+#    macOS's 512-byte pipe deadlocks there (same class the core installer hit,
+#    a1fbc80), and a wedged SessionStart hook freezes every session outside
+#    safe mode. Re-copied on every run, so an upstream reinstall can't
+#    silently bring the deadlock back.
+mkdir -p "$CLAUDE_DIR/hooks"
+for h in cbm-session-reminder cbm-subagent-reminder; do
+  cp -f "$HERE/hooks/$h" "$CLAUDE_DIR/hooks/$h"
+  chmod +x "$CLAUDE_DIR/hooks/$h"
+done
+echo "codebase-memory-mcp: heredoc-free hooks deployed (session/subagent reminders)"
+
 # 2. MCP registration in ~/.claude.json — no-op when already registered.
 # (merge logic in a .cjs by path, NOT a heredoc — see adapter install.sh step 4)
 BIN_PATH="$(command -v "$CBM_BIN" || true)"

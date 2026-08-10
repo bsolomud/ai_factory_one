@@ -1,7 +1,24 @@
 #!/usr/bin/env node
 import { main } from '../src/guard.js'
 
+// HARD REQUIREMENT (src/guard.js): the guard must never break a session — and
+// that includes never HANGING one. Hook payloads arrive on stdin and normally
+// end with EOF, but a stdin that never closes (a held-open pipe, a terminal
+// when run by hand, a harness hiccup mid-write) must not block the hook
+// forever: after the deadline we run with whatever arrived — main() fails
+// open on partial or empty input — and exit explicitly, because the
+// still-open stdin would otherwise keep the process alive.
 let stdin = ''
+let done = false
+const run = () => {
+  if (done) return
+  done = true
+  clearTimeout(deadline)
+  main(process.argv.slice(2), stdin)
+  process.exit(process.exitCode ?? 0)
+}
+const deadline = setTimeout(run, 2000)
 process.stdin.setEncoding('utf8')
 process.stdin.on('data', chunk => { stdin += chunk })
-process.stdin.on('end', () => main(process.argv.slice(2), stdin))
+process.stdin.on('end', run)
+process.stdin.on('error', run)

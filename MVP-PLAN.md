@@ -117,21 +117,14 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
 - [ ] **Live smoke run on a real ticket** (review suggestion #2) — the key next step;
   developer-triggered. Everything above only proves the substrate, not AI output quality.
 - [ ] **Critic/reviewer calibration** (review suggestion #6) — done during the first live run.
-- [ ] **Parallel tickets via isolated working trees.** Today the run/state model is fully
-  multi-run (many tickets coexist, selected by `--run`), and tickets in non-code stages or
-  in *different* repos are already parallel-safe. But two runs *actively coding* in the
-  **same clone** collide: git gives one working tree/branch per checkout, and
-  `guard.activeRun()` currently returns the *first* non-DONE run (directory order), so with
-  ≥2 active runs it keys its write/commit/push rules off an arbitrary run. Plan:
-  1. **Make the guard run-aware** — resolve the applicable run by the current branch (or
-     cwd/worktree) instead of "first active", so its stage-based write rules match the run
-     the developer is actually in. (Prerequisite; land before relying on concurrency.)
-  2. **First-class git worktrees** — one worktree (or clone) per ticket, each with its own
-     branch and working tree; the pipeline home stays shared and keyed by run id, so states
-     remain isolated. Likely `pipeline worktree <run>` to create/track the tree, and record
-     its path in the run so `--repo`/reconcile resolve to the right tree.
-  3. Document the "one worktree per ticket" workflow in `PILOT.md`.
-  Rough effort ~1 day; #1 alone removes the correctness gap even before full worktree support.
+- [x] **Parallel tickets via isolated working trees.** One worktree per run, opt-in:
+  `pipeline new-run <id> --worktree` creates a detached tree at the base branch under
+  `~/.ai_factory_one/worktrees/<slug>/<runId>` and records it in `state.git.worktree`;
+  every command follows the run's tree regardless of cwd, a cwd inside a worktree
+  auto-selects its run (N terminals, no `--run`), the guard resolves runs worktree-first
+  and enforces cross-tree writes, `pipeline worktree add|remove` covers retrofit/cleanup,
+  and the optional `commands.worktree_setup` profile slot surfaces per-tree setup.
+  Workflow documented in `PILOT.md` ("Parallel tickets").
 - [ ] **Onboarding auto-detection (`detect.js`)** — infer lint/test/hook commands from
   lockfiles/configs instead of the manual interview (plan P2.1–P2.5).
 - [ ] **`connectors.yml` guided ticket fetch** — Jira/GitHub token setup + fetch (plan P2.6);

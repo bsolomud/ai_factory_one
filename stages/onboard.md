@@ -62,9 +62,12 @@ silently bypassed.
 
 ### 3. Interview — repo facts only
 Base branch, branch/PR naming, canonical command when several exist,
-`no_touch` paths, test layout mapping. Prefill from detection (and from
-`existing_profile` when re-onboarding). Never ask about task-tracker access
-here.
+`no_touch` paths, test layout mapping. Also ask for an optional
+`commands.worktree_setup`: the command(s) that make a fresh checkout of this
+repo runnable (dependency install, config copy) — used when a run gets its own
+worktree for parallel tickets; leave empty if the developer prefers to set
+worktrees up by hand. Prefill from detection (and from `existing_profile` when
+re-onboarding). Never ask about task-tracker access here.
 
 ### 4. Write the profile
 `profile.yml` at `profile_path`, with: `commands` slots (each command entry

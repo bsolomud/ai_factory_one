@@ -2,12 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
-import { currentBranch, loadProfile, validateProfile, untrackedFiles } from './profile.js'
+import { currentBranch, loadProfile, resolveSlot, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { parseArtifact } from './artifacts.js'
 import { reconcile } from './reconcile.js'
 import { appendEvent, newState, readEvents, readState, writeState } from './state.js'
 import { runValidators } from './validators.js'
+import { checkoutBranch, createWorktree, deleteBranch, mainWorktreeDir, removeWorktree } from './worktree.js'
 import * as paths from './paths.js'
 
 // Exit codes: 0 = success verdicts, 1 = BLOCKED/error. A non-zero exit surfaces
@@ -42,7 +43,9 @@ const commands = {
       if (!(e instanceof NoRepoError)) throw e
       return emit({ verdict: 'NO_REPO', known_repos: paths.knownRepos(), next_action: 'pass a repo path: pipeline onboard <path> (or --repo <slug>)' }, 1)
     }
-    paths.recordRepoLocation(ctx.slug, ctx.repoDir) // registered even before a profile exists
+    if (!paths.isLinkedWorktree(ctx.repoDir)) {
+      paths.recordRepoLocation(ctx.slug, ctx.repoDir) // registered even before a profile exists
+    }
     return emit({
       verdict: 'ONBOARD',
       repo: ctx.slug,
@@ -114,7 +117,10 @@ const commands = {
     if (active.length === 0) {
       return emit({ verdict: 'NO_ACTIVE_RUN', repo: ctx.slug, finished_runs: runs.length, next_action: 'ask the developer for a ticket, then: pipeline new-run <id>' })
     }
-    const selected = flags.run ? active.find(r => r.id === flags.run) : active.length === 1 ? active[0] : null
+    const wtRun = flags.run ? null : runForWorktree(ctx.slug, ctx.repoDir)
+    const selected = flags.run ? active.find(r => r.id === flags.run)
+      : wtRun ? active.find(r => r.id === wtRun)
+      : active.length === 1 ? active[0] : null
     if (!selected) {
       return emit({
         verdict: 'ACTIVE_RUN',
@@ -125,7 +131,15 @@ const commands = {
     }
     const config = loadPipeline()
     const runDir = paths.runDir(ctx.slug, selected.id)
-    const { state, notes } = reconcile({ runDir, repoDir: ctx.repoDir, config, runId: selected.id, repoSlug: ctx.slug })
+    // A run with a worktree is reconciled against ITS tree, not wherever this
+    // command happens to be invoked from. Missing tree → a note, never a wall:
+    // status is the recovery entry point and must always answer.
+    let repoDir = ctx.repoDir
+    try {
+      const wt = readState(runDir).git?.worktree
+      if (wt && fs.existsSync(wt)) repoDir = wt
+    } catch { /* corrupt state — reconcile rebuilds it below */ }
+    const { state, notes } = reconcile({ runDir, repoDir, config, runId: selected.id, repoSlug: ctx.slug })
     const def = config.stages[state.stage]
     return emit({
       verdict: 'ACTIVE_RUN',
@@ -139,43 +153,65 @@ const commands = {
       reconcile_notes: notes,
       stage_prompt: def ? paths.asset(def.prompt) : null,
       run_dir: runDir,
+      worktree: state.git?.worktree || null,
       next_action: nextAction(state)
     })
   },
 
   'new-run'(positional, flags) {
     const runId = positional[0]
-    if (!runId) return emit({ verdict: 'ERROR', error: 'usage: pipeline new-run <ticket-id>' }, 1)
+    if (!runId) return emit({ verdict: 'ERROR', error: 'usage: pipeline new-run <ticket-id> [--worktree]' }, 1)
+    // Run ids become path segments (runs/<id>, worktrees/<slug>/<id>) — never
+    // build one from an id containing separators or traversal.
+    if (!/^[\w.-]+$/.test(runId) || runId === '.' || runId === '..') {
+      return emit({ verdict: 'ERROR', error: `run id '${runId}' must contain only letters, digits, '.', '_' or '-'` }, 1)
+    }
+    if (flags.autonomy && !AUTONOMY_MODES.includes(flags.autonomy)) {
+      return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (${AUTONOMY_MODES.join(' | ')})` }, 1)
+    }
     const ctx = resolveRepo(flags, { requireProfile: true })
     const runDir = paths.runDir(ctx.slug, runId)
     if (fs.existsSync(runDir)) {
       return emit({ verdict: 'ERROR', error: `run ${runId} already exists — resume it via 'pipeline status --run ${runId}'` }, 1)
     }
+    const base = ctx.profile?.conventions?.base_branch || 'master'
+    // Opt-in isolated working tree, so several runs can code in parallel without
+    // sharing a checkout. Created BEFORE anything else — a failure creates no run.
+    // Detached at base; the run's branch is created at BREAKDOWN inside this tree.
+    let worktree = null
+    if (flags.worktree) {
+      worktree = paths.worktreeDir(ctx.slug, runId)
+      if (fs.existsSync(worktree)) {
+        return emit({ verdict: 'ERROR', error: `worktree already exists at ${worktree} — remove it first ('git worktree remove ${worktree}')` }, 1)
+      }
+      createWorktree(ctx.repoDir, worktree, base)
+    }
     const config = loadPipeline()
     fs.mkdirSync(path.join(runDir, 'artifacts'), { recursive: true })
     scaffoldArtifacts(runDir, config, runId)
-    const base = ctx.profile?.conventions?.base_branch || 'master'
     // Snapshot the developer's pre-existing untracked files NOW, before the pipeline
     // writes anything, so the write-boundary check ignores their ambient scratch and
-    // only flags untracked files the run itself creates outside the plan.
-    const baselineUntracked = untrackedFiles(ctx.repoDir)
-    const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked })
-    if (flags.autonomy) {
-      if (!AUTONOMY_MODES.includes(flags.autonomy)) {
-        return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (${AUTONOMY_MODES.join(' | ')})` }, 1)
-      }
-      state.autonomy = flags.autonomy
-    }
+    // only flags untracked files the run itself creates outside the plan. A fresh
+    // worktree honestly has none — the run's tree, the run's baseline.
+    const baselineUntracked = untrackedFiles(worktree || ctx.repoDir)
+    const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked, worktree })
+    if (flags.autonomy) state.autonomy = flags.autonomy
     writeState(runDir, state)
     // The full file list (not just a count) so a rebuilt state.json restores the
     // ambient baseline — otherwise a crash would re-flag the developer's scratch.
     appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked })
+    if (worktree) appendEvent(runDir, { event: 'worktree_created', path: worktree, base })
+    // worktree_setup is surfaced, never executed: deps install can be slow,
+    // credentialed, or interactive — the dispatcher/developer runs it.
+    const setup = worktree ? resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run) : []
     return emit({
       verdict: 'CREATED',
       run: runId,
       stage: state.stage,
       stage_prompt: paths.asset(config.stages[state.stage].prompt),
-      run_dir: runDir
+      run_dir: runDir,
+      ...(worktree && { worktree }),
+      ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' })
     })
   },
 
@@ -375,6 +411,74 @@ const commands = {
       verdict: 'ABORTED',
       run: state.run_id,
       note: `run marked aborted at ${runDir}. Its git branch (if any) was left untouched — remove it manually if unwanted.`
+        + (state.git?.worktree ? ` Its worktree at ${state.git.worktree} was kept — clean up with 'pipeline worktree remove --run ${state.run_id}'.` : '')
+    })
+  },
+
+  // Per-run working tree lifecycle. `add` retrofits a worktree onto an existing
+  // run (or recreates a manually-deleted one); `remove` is the ONLY sanctioned
+  // cleanup — nothing removes a worktree automatically.
+  worktree(positional, flags) {
+    const action = positional[0]
+    if (!['add', 'remove'].includes(action)) {
+      return emit({ verdict: 'ERROR', error: 'usage: pipeline worktree <add|remove> [--run <id>] [--force] [--delete-branch]' }, 1)
+    }
+    // followWorktree off: this command manages the worktree record itself, so a
+    // recorded-but-missing tree must be reachable, not a hard error.
+    const { ctx, runDir, state } = loadRun(flags, { followWorktree: false })
+    // worktree add/remove must run from the main clone — never from inside the
+    // tree being changed (the invoking cwd may itself be a worktree).
+    const mainDir = mainWorktreeDir(ctx.repoDir)
+
+    if (action === 'add') {
+      const wtPath = state.git.worktree || paths.worktreeDir(ctx.slug, state.run_id)
+      if (fs.existsSync(wtPath)) {
+        return emit({ verdict: 'ERROR', error: `worktree already exists at ${wtPath}` }, 1)
+      }
+      createWorktree(mainDir, wtPath, state.git.base)
+      if (state.git.branch) {
+        try {
+          checkoutBranch(wtPath, state.git.branch)
+        } catch (e) {
+          removeWorktree(mainDir, wtPath, { force: true }) // never leave a half-set-up tree
+          throw e
+        }
+      }
+      // The run works in this tree from now on — its ambient baseline is this
+      // tree's untracked files (fresh tree → none), not the old checkout's.
+      const files = untrackedFiles(wtPath)
+      state.git.worktree = wtPath
+      state.git.baseline_untracked = files
+      writeState(runDir, state)
+      appendEvent(runDir, { event: 'worktree_created', path: wtPath, base: state.git.base })
+      appendEvent(runDir, { event: 'baseline_untracked', count: files.length, files })
+      const setup = resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run)
+      return emit({
+        verdict: 'OK',
+        run: state.run_id,
+        worktree: wtPath,
+        checked_out: state.git.branch || `detached at ${state.git.base}`,
+        ...(setup.length && { worktree_setup: setup }),
+        note: 'run the worktree_setup command(s) (and copy untracked config like .env) before working there'
+      })
+    }
+
+    // remove
+    const wtPath = state.git.worktree
+    if (!wtPath) return emit({ verdict: 'ERROR', error: `run ${state.run_id} has no worktree` }, 1)
+    if (flags['delete-branch'] && state.stage !== 'DONE' && !flags.force) {
+      return emit({ verdict: 'ERROR', error: `run ${state.run_id} is still at ${state.stage} — deleting its branch now would destroy in-flight work (pass --force if you really mean it)` }, 1)
+    }
+    removeWorktree(mainDir, wtPath, { force: !!flags.force })
+    if (flags['delete-branch'] && state.git.branch) deleteBranch(mainDir, state.git.branch)
+    state.git.worktree = null
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'worktree_removed', path: wtPath })
+    return emit({
+      verdict: 'OK',
+      run: state.run_id,
+      removed: wtPath,
+      branch: flags['delete-branch'] && state.git.branch ? `deleted ${state.git.branch}` : (state.git.branch ? `kept ${state.git.branch}` : null)
     })
   },
 
@@ -482,10 +586,18 @@ const commands = {
 
   reconcile(_, flags) {
     const ctx = resolveRepo(flags, { requireProfile: true })
-    const runId = flags.run || onlyActiveRun(ctx.slug)
+    const runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)
     if (!runId) return emit({ verdict: 'ERROR', error: 'no active run (or pass --run <id>)' }, 1)
     const config = loadPipeline()
-    const { state, notes, rebuilt } = reconcile({ runDir: paths.runDir(ctx.slug, runId), repoDir: ctx.repoDir, config, runId, repoSlug: ctx.slug })
+    const runDir = paths.runDir(ctx.slug, runId)
+    // Reconcile a worktree-backed run against ITS tree (missing tree → the
+    // reconciler notes it and falls back to the invoked repo for git checks).
+    let repoDir = ctx.repoDir
+    try {
+      const wt = readState(runDir).git?.worktree
+      if (wt && fs.existsSync(wt)) repoDir = wt
+    } catch { /* corrupt state — rebuilt below */ }
+    const { state, notes, rebuilt } = reconcile({ runDir, repoDir, config, runId, repoSlug: ctx.slug })
     return emit({ verdict: 'OK', rebuilt, stage: state.stage, stage_status: state.stage_status, notes })
   }
 }
@@ -552,20 +664,30 @@ function resolveRepo(flags, { requireProfile } = {}) {
   if (!repoDir) throw new NoRepoError(`'${target}' is not inside a git repository`)
   const slug = paths.repoSlug(repoDir)
   const profile = loadProfile(paths.profilePath(slug))
-  if (profile) paths.recordRepoLocation(slug, repoDir)
+  // A linked worktree must never overwrite the canonical clone path — the
+  // registry is how `--repo <slug>` finds the repo from anywhere, forever.
+  if (profile && !paths.isLinkedWorktree(repoDir)) paths.recordRepoLocation(slug, repoDir)
   if (requireProfile && !profile) {
     throw new Error(`no profile for repo '${slug}' — run onboarding first (pipeline status explains how)`)
   }
   return { repoDir, slug, profile }
 }
 
-function loadRun(flags) {
+function loadRun(flags, { followWorktree = true } = {}) {
   const ctx = resolveRepo(flags, { requireProfile: true })
-  const runId = flags.run || onlyActiveRun(ctx.slug)
+  const runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)
   if (!runId) throw new Error(`no single active run — pass --run <id> (see 'pipeline status')`)
   const runDir = paths.runDir(ctx.slug, runId)
   const config = loadPipeline()
   const state = readState(runDir) // StateError propagates → caller told to run status (auto-reconciles)
+  // A run with a worktree works THERE, no matter where the CLI was invoked —
+  // validators, branch recording, untracked snapshots all target the run's tree.
+  if (followWorktree && state.git?.worktree) {
+    if (!fs.existsSync(state.git.worktree)) {
+      throw new Error(`run ${runId} works in ${state.git.worktree} but that directory is missing — recreate it ('pipeline worktree add --run ${runId}') or clear the record ('pipeline worktree remove --run ${runId}')`)
+    }
+    ctx.repoDir = state.git.worktree
+  }
   return { ctx, config, runDir, state }
 }
 
@@ -584,6 +706,21 @@ function listRuns(slug) {
 function onlyActiveRun(slug) {
   const active = listRuns(slug).filter(r => r.stage !== 'DONE')
   return active.length === 1 ? active[0].id : null
+}
+
+// The active run whose recorded worktree IS this working tree — what lets N
+// terminals each sit in their own worktree and never pass --run.
+function runForWorktree(slug, repoDir) {
+  if (!paths.isLinkedWorktree(repoDir)) return null
+  const dir = paths.realpathish(repoDir)
+  for (const r of listRuns(slug)) {
+    if (r.stage === 'DONE') continue
+    try {
+      const wt = readState(paths.runDir(slug, r.id)).git?.worktree
+      if (wt && paths.realpathish(wt) === dir) return r.id
+    } catch { /* corrupt state — reconcile's job, not selection's */ }
+  }
+  return null
 }
 
 // Staleness triggers: the evidence files the profile was derived from, AND

@@ -34,7 +34,7 @@ test('every stage prompt referenced by pipeline.yml exists, and vice versa', () 
     assert.ok(fs.existsSync(path.join(PACKAGE_ROOT, rel)), `${rel} referenced but missing`)
   }
   const onDisk = fs.readdirSync(path.join(PACKAGE_ROOT, 'stages'))
-  const nonStage = ['onboard.md', 'plan-critic.md'] // engine-level / critic prompts, not FSM stages
+  const nonStage = ['onboard.md', 'plan-critic.md', 'pr-feedback.md'] // engine-level / critic / off-FSM procedure prompts, not FSM stages
   for (const file of onDisk) {
     if (nonStage.includes(file)) continue
     assert.ok(referenced.includes(`stages/${file}`), `stages/${file} exists but no stage references it`)

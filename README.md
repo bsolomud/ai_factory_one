@@ -142,6 +142,9 @@ PR → CI loop → retro.
 /pipeline set-autonomy gated|express   # switch modes any time mid-run
 /pipeline request-changes --note "…"   # decline a gate: records the correction
                                        # (human_rounds metric) + reopens the stage
+/pipeline pr-feedback [<pr>]        # triage reviewer comments on the open PR:
+                                    # accepted → reopen + gated rework;
+                                    # rejected/answered → drafted replies
 /pipeline onboard <path>            # analyze a repo + bind its skills (below)
 /pipeline status                    # where am I, what's next
 /pipeline show                      # the current artifact/diff, for review

@@ -12,7 +12,7 @@ const STAGE_STATUSES = ['in_progress', 'awaiting_gate', 'complete']
 // would be a permanently misclassified event no writer-side fix can repair.
 export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'other']
 
-export function newState({ runId, repo, stage, base, branch, baselineUntracked }) {
+export function newState({ runId, repo, stage, base, branch, baselineUntracked, worktree }) {
   return {
     schema_version: 1,
     run_id:         runId,
@@ -22,7 +22,7 @@ export function newState({ runId, repo, stage, base, branch, baselineUntracked }
     substate:       { critic_round: 0, subtask: null, of: null },
     autonomy:       'gated',
     gates:          [],
-    git:            { branch: branch || null, base: base || 'master', last_sha: null, baseline_untracked: baselineUntracked || [] },
+    git:            { branch: branch || null, base: base || 'master', worktree: worktree || null, last_sha: null, baseline_untracked: baselineUntracked || [] },
     session_ids:    {},
     unverified:     []
   }

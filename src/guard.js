@@ -61,10 +61,14 @@ export function guard(mode, input) {
     // dir (and may spawn git). The common case, a normal non-pipeline session
     // in an onboarded repo, must stay near-free on every guarded tool call.
     if (!sessionEngaged(input.session_id)) return allow()
-    const run = activeRun(slug, repoDir)
-    if (!run) return allow() // no run in flight — normal Claude usage
-    if (mode === 'bash') return guardBash(input.tool_input?.command || '', run)
-    if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, cwd })
+    const active = activeRuns(slug)
+    if (!active.length) return allow() // no run in flight — normal Claude usage
+    const run = resolveRun(active, repoDir)
+    // Bash needs THE run (its stage keys commit/push rules) — ambiguous → open.
+    // Writes are checked even without a resolved run: the write's target path
+    // may land in some run's worktree, which identifies the run by itself.
+    if (mode === 'bash') return run ? guardBash(input.tool_input?.command || '', run) : allow()
+    if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, active, cwd })
     return allow()
   } catch {
     return allow() // fail open, always
@@ -110,50 +114,50 @@ function guardBash(command, { state }) {
 
 // Canonicalize a possibly-not-yet-existing path (macOS: /var → /private/var
 // symlinks break naive prefix comparison against git's resolved toplevel).
-function realish(p) {
-  let head = p
-  const tail = []
-  while (!fs.existsSync(head)) {
-    const parent = path.dirname(head)
-    if (parent === head) return p
-    tail.unshift(path.basename(head))
-    head = parent
-  }
-  return path.join(fs.realpathSync.native(head), ...tail)
-}
+const realish = paths.realpathish
 
-function guardWrite(filePath, { repoDir, profile, run, cwd }) {
+function guardWrite(filePath, { repoDir, profile, run, active, cwd }) {
   if (!filePath) return allow()
   const abs = realish(path.resolve(realish(cwd), filePath))
-  repoDir = realish(repoDir)
-  run = { ...run, runDir: realish(run.runDir) }
 
   // Pipeline state is CLI-written ONLY — a model editing its own state file is
-  // how these systems corrupt themselves.
+  // how these systems corrupt themselves. Every active run's state is off-limits,
+  // not just the resolved one's.
   const base = path.basename(abs)
-  if (abs.startsWith(run.runDir + path.sep) && (base === 'state.json' || base === 'events.jsonl')) {
-    return deny(`${base} is written only by the pipeline CLI — never edit it directly. Use 'pipeline advance' / 'pipeline set-substate' instead.`)
+  if (base === 'state.json' || base === 'events.jsonl') {
+    for (const r of active) {
+      if (abs.startsWith(realish(r.runDir) + path.sep)) {
+        return deny(`${base} is written only by the pipeline CLI — never edit it directly. Use 'pipeline advance' / 'pipeline set-substate' instead.`)
+      }
+    }
   }
-  if (!abs.startsWith(repoDir + path.sep)) return allow() // outside the repo (incl. run artifacts)
 
-  const rel = path.relative(repoDir, abs)
+  // The write is judged by the tree it LANDS in: a path inside some run's
+  // worktree belongs to that run (and identifies it), no matter where the
+  // session's cwd is — otherwise a main-clone session could edit a worktree
+  // past no_touch and the stage rules.
+  let target = run
+  let root = realish(repoDir)
+  for (const r of active) {
+    const wt = r.state.git?.worktree && realish(r.state.git.worktree)
+    if (wt && abs.startsWith(wt + path.sep)) { target = r; root = wt; break }
+  }
+  if (!abs.startsWith(root + path.sep)) return allow() // outside the repo (incl. run artifacts)
+  if (!target) return allow() // several runs share this tree, none resolvable — fail open, never guess
+
+  const rel = path.relative(root, abs)
   if (matchesAny(rel, profile.no_touch || [])) {
     return deny(`${rel} matches a no_touch rule in this repo's pipeline profile — the pipeline must never modify it. If the change is genuinely required, the developer must make it manually.`)
   }
-  if (!WRITE_STAGES.includes(run.state.stage)) {
-    return deny(`repo writes are not allowed during the ${run.state.stage} stage (pipeline run ${run.state.run_id} is active). ${run.state.stage} only produces its artifact in the run directory; code changes happen in IMPLEMENT.`)
+  if (!WRITE_STAGES.includes(target.state.stage)) {
+    return deny(`repo writes are not allowed during the ${target.state.stage} stage (pipeline run ${target.state.run_id} is active). ${target.state.stage} only produces its artifact in the run directory; code changes happen in IMPLEMENT.`)
   }
   return allow()
 }
 
-// Resolve the run this session is actually working in. One active run is
-// unambiguous. With several coding in the same clone, match the checked-out
-// branch against each run's recorded working branch (`branch_recorded` at the
-// first post-BREAKDOWN advance) — enforcement keyed to an arbitrary run applies
-// the WRONG run's stage rules. No single match → fail open, never guess.
-function activeRun(slug, repoDir) {
+function activeRuns(slug) {
   const runsDir = path.join(paths.repoHome(slug), 'runs')
-  if (!fs.existsSync(runsDir)) return null
+  if (!fs.existsSync(runsDir)) return []
   const active = []
   for (const id of fs.readdirSync(runsDir)) {
     const runDir = path.join(runsDir, id)
@@ -162,7 +166,25 @@ function activeRun(slug, repoDir) {
       if (state.stage !== 'DONE') active.push({ state, runDir })
     } catch { /* corrupt state → reconcile's job, not the guard's */ }
   }
+  return active
+}
+
+// Resolve the run this session is actually working in. One active run is
+// unambiguous. With several, the working tree decides first — a run's recorded
+// worktree pins it from creation, before any branch exists. Then the
+// checked-out branch (`branch_recorded` at the first post-BREAKDOWN advance):
+// enforcement keyed to an arbitrary run applies the WRONG run's stage rules.
+// No single match → fail open, never guess.
+//
+// Known gap, accepted: guardBash is regex-only, so `git -C <other-worktree>
+// commit` run from a different tree resolves the run by cwd, not the -C
+// target. The validators (commit counts, write boundary) remain the real
+// order-enforcers; the guard is defense-in-depth.
+function resolveRun(active, repoDir) {
   if (active.length <= 1) return active[0] ?? null
+  const dir = realish(repoDir)
+  const byTree = active.filter(r => r.state.git?.worktree && realish(r.state.git.worktree) === dir)
+  if (byTree.length === 1) return byTree[0]
   const branch = currentBranch(repoDir)
   const matches = branch ? active.filter(r => r.state.git?.branch === branch) : []
   return matches.length === 1 ? matches[0] : null

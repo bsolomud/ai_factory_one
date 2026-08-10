@@ -22,6 +22,12 @@ export function reconcile({ runDir, repoDir, config, runId, repoSlug }) {
     writeState(runDir, state)
   }
 
+  // A worktree-backed run whose tree vanished (deleted by hand, moved disk)
+  // can't code — say so and point at the two ways out.
+  if (state.git?.worktree && !fs.existsSync(state.git.worktree)) {
+    notes.push(`the run's worktree ${state.git.worktree} is missing — recreate it ('pipeline worktree add --run ${runId}') or clear the record ('pipeline worktree remove --run ${runId}')`)
+  }
+
   // Crash between artifact completion and `advance`.
   const def = config.stages[state.stage]
   if (def?.output && state.stage_status === 'in_progress' && isComplete(path.join(runDir, def.output))) {
@@ -69,8 +75,11 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   // pre-list-events runs recorded only a count — tolerate that, restore nothing.
   const baselineEvent = events.filter(e => e.event === 'baseline_untracked').at(-1)
   const baselineUntracked = [baselineEvent?.files, created?.baseline_untracked].find(Array.isArray) || []
+  // Worktree lifecycle: the last created/removed event wins.
+  const wtEvent = events.filter(e => e.event === 'worktree_created' || e.event === 'worktree_removed').at(-1)
+  const worktree = wtEvent?.event === 'worktree_created' ? wtEvent.path : null
 
-  const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked })
+  const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked, worktree })
   state.gates = gates
 
   if (lastComplete) {

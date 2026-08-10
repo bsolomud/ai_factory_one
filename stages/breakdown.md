@@ -24,8 +24,13 @@ under `## Deviations`.
 2. Initialize the cursor: `pipeline set-substate subtask=1 of=<N>` where N is
    the plan's subtask count.
 3. Create the working branch per the profile's `conventions.branch_pattern`,
-   based on `conventions.base_branch`. If the branch already exists (re-entry),
-   just check it out.
+   based on `conventions.base_branch` — **in the run's workdir** (the handoff's
+   `workdir:` line), never in any other checkout: `git -C <workdir> checkout -b
+   <branch>`. A worktree-backed run starts detached at the base commit, so
+   `checkout -b` from there is exactly right. If the branch already exists
+   (re-entry), just check it out in the workdir; if git refuses because the
+   branch is checked out in ANOTHER worktree, STOP and flag it to the
+   developer — a parallel run may have claimed it.
 
 ## Done when
 Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Artifact complete,

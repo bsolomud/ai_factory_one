@@ -49,6 +49,34 @@ helps. Read this once before your first ticket.
 5. `/pipeline status` any time to see where you are.
 6. Abandon a dead-end run with `/pipeline abort`.
 
+## Parallel tickets (one worktree per run)
+
+Two (or more) tickets can run simultaneously against the same repo — each run
+gets its own git worktree, so branches and working files never collide.
+
+1. Terminal 1: `/pipeline start TICKET-A` as usual.
+2. Terminal 2 (new Claude Code session): `/pipeline start TICKET-B` — the
+   dispatcher sees a run is already active and creates this run with its own
+   worktree at `~/.ai_factory_one/worktrees/<repo>/<run-id>` (you can also ask
+   for one explicitly: "use a worktree"). All stage work for that run happens
+   in that tree automatically.
+3. Work both sessions independently: gates, `/pipeline work`, approvals — each
+   session names its run (`--run <id>` under the hood), or just `cd` into a
+   run's worktree, where the CLI auto-selects that run.
+4. When a run is DONE and its PR merged: `pipeline worktree remove --run <id>`
+   (add `--delete-branch` to also drop the branch). Nothing is removed
+   automatically.
+
+Things to know:
+- **A fresh worktree has no deps or local config.** The profile's optional
+  `commands.worktree_setup` (asked during onboarding) is surfaced at run
+  creation for you to run; untracked files like `.env` must be copied by hand.
+- **The worktree is created from your local base branch** — pull first if you
+  want the run to start from the latest.
+- **Branch deletion is always manual/explicit**, exactly like non-worktree runs.
+- If a run's worktree goes missing (deleted by hand), `status` says so;
+  `pipeline worktree add --run <id>` recreates it on the run's branch.
+
 ## What to watch for (and report via feedback)
 
 - **Context stage**: were the questions the right ones? Did the acceptance

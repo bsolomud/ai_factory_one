@@ -57,6 +57,37 @@ export function runDir(slug, runId) {
   return path.join(repoHome(slug), 'runs', runId)
 }
 
+// Per-run working trees live under the pipeline home (like all run state):
+// the installed Claude Code permissions already cover the home, so any
+// session can work in a worktree with zero settings changes.
+export function worktreeDir(slug, runId) {
+  return path.join(home(), 'worktrees', slug, runId)
+}
+
+// A linked worktree has a .git FILE (pointer to the main clone's git dir)
+// where the main clone has a directory — one stat, no subprocess.
+export function isLinkedWorktree(repoDir) {
+  try {
+    return fs.statSync(path.join(repoDir, '.git')).isFile()
+  } catch {
+    return false
+  }
+}
+
+// Canonicalize a possibly-not-yet-existing path (macOS: /var → /private/var
+// symlinks break naive prefix comparison against git's resolved toplevel).
+export function realpathish(p) {
+  let head = p
+  const tail = []
+  while (!fs.existsSync(head)) {
+    const parent = path.dirname(head)
+    if (parent === head) return p
+    tail.unshift(path.basename(head))
+    head = parent
+  }
+  return path.join(fs.realpathSync.native(head), ...tail)
+}
+
 // Registry of where each known repo lives locally, so /pipeline works from any
 // folder: recorded on every successful profile resolution, read by `repos`.
 export function recordRepoLocation(slug, repoDir) {

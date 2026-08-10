@@ -107,6 +107,33 @@ test('two active runs: enforcement follows the checked-out branch, never an arbi
   assert.equal(bash(repo, 'git commit -m x').decision, 'deny', 'one active run (PLAN) → its rules apply')
 })
 
+test('two active runs with worktrees: enforcement keys to the tree, from any cwd', () => {
+  const { repo, home } = setup({ stage: 'PLAN' }) // run T-9
+  const slug = 'example.com-test-g-repo'
+  const wtA = path.join(home, 'worktrees', slug, 'T-9')
+  const wtB = path.join(home, 'worktrees', slug, 'T-10')
+  repo.git('worktree', 'add', '--detach', wtA, 'master')
+  repo.git('worktree', 'add', '--detach', wtB, 'master')
+  const stateA = newState({ runId: 'T-9', repo: slug, stage: 'PLAN', worktree: wtA })
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-9'), stateA)
+  const stateB = newState({ runId: 'T-10', repo: slug, stage: 'IMPLEMENT', worktree: wtB })
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-10'), stateB)
+
+  // cwd inside a worktree resolves ITS run — before any branch exists.
+  assert.equal(guard('write', { cwd: wtB, session_id: SESSION, tool_input: { file_path: 'src/app.sh' } }).decision, 'allow', 'IMPLEMENT run writes in its tree')
+  assert.match(guard('write', { cwd: wtA, session_id: SESSION, tool_input: { file_path: 'src/app.sh' } }).message, /PLAN stage/, 'PLAN run cannot write in its tree')
+  assert.equal(guard('bash', { cwd: wtB, session_id: SESSION, tool_input: { command: 'git commit -m x' } }).decision, 'allow')
+  assert.equal(guard('bash', { cwd: wtA, session_id: SESSION, tool_input: { command: 'git commit -m x' } }).decision, 'deny')
+
+  // Cross-tree writes: judged by the tree the path LANDS in, not the session cwd
+  // (the clone's cwd is ambiguous here — two active runs, no branch match).
+  const fromClone = file_path => guard('write', { cwd: repo.dir, session_id: SESSION, tool_input: { file_path } })
+  assert.equal(fromClone(path.join(wtB, 'src/app.sh')).decision, 'allow', 'write landing in the IMPLEMENT tree')
+  assert.match(fromClone(path.join(wtA, 'src/app.sh')).message, /PLAN stage/, 'write landing in the PLAN tree')
+  assert.match(fromClone(path.join(wtB, 'locked/keep.txt')).message, /no_touch/, 'no_touch holds inside a worktree')
+  assert.equal(fromClone('src/app.sh').decision, 'allow', 'write into the ambiguous clone itself → fail open, never guess')
+})
+
 // --- opt-in: pipeline never enforces unless THIS session ran /pipeline ---
 
 test('active run does NOT enforce in a session that never ran /pipeline', () => {

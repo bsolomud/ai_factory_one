@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | ignore-untracked | set-autonomy <gated|express> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | ignore-untracked | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -73,8 +73,11 @@ Other:
 
 ```
 Self-contained run context (you have NO other conversation context):
-- CLI: ~/.ai_factory_one/bin/pipeline  (pass --repo <slug> to every call)
+- CLI: ~/.ai_factory_one/bin/pipeline  (pass --repo <slug> AND --run <run id> to every call)
 - repo: <slug> at <repo_path>
+- workdir: <worktree from status, else repo_path>  (ALL repo edits and git
+  commands target THIS tree — use absolute paths / `git -C <workdir> …`
+  whenever your cwd differs; other checkouts of this repo belong to other runs)
 - run: <run id> · run_dir: <run_dir>  (artifacts in <run_dir>/artifacts/)
 - stage: <STAGE> · runbook: <stage_prompt>  (read it FIRST, follow it)
 - base branch: <base> · task input: <run_dir>/artifacts/00-ticket.md
@@ -97,6 +100,9 @@ Return a summary ≤30 lines. Do not paste artifact contents.
 - `status` → **NO_REPO** → run `pipeline repos`, ask the developer which
   repo this task concerns (or a path); pass `--repo <slug>` from then on.
 - Inside a repo → default to it; confirm if the task names another.
+- **Once a run is selected in this session, pass `--run <id>` on EVERY CLI
+  call.** With parallel runs in flight, the single-active-run shortcut does
+  not exist — an unqualified call errors or, worse, targets the wrong run.
 - **Multi-repo features are OUT OF SCOPE for pilot v1.** If a task spans
   several repos, tell the developer to run one repo now and open a separate
   `/pipeline start` for the other; do not attempt to link runs. (A real
@@ -117,7 +123,13 @@ yet — so spawn the onboarder agent directly.)
 1. `pipeline status`. NO_PROFILE → run the `/pipeline onboard` flow below
    first. PROFILE_STALE → onboard flow (re-sync). Matching ACTIVE_RUN → `work`.
 2. Run id: ticket id if present, else a short kebab slug. `pipeline new-run
-   <id>`; write the developer's raw input to `<run_dir>/artifacts/00-ticket.md`,
+   <id>` — **add `--worktree` when `status` showed other active run(s) in this
+   repo, or the developer says they'll work tickets in parallel**: the run then
+   gets its own working tree (reported as `worktree` in the output; use it as
+   the handoff `workdir:`). If the output lists `worktree_setup` commands,
+   relay them to the developer (or run them on their ok) before the CONTEXT
+   stage — a fresh worktree has no installed deps or local config. Then write
+   the developer's raw input to `<run_dir>/artifacts/00-ticket.md`,
    prefixed with a short BLUF header above the raw body — a blockquote with
    **source** (ticket id / link / "pasted text"), any **ids** (e.g. Airbrake,
    occurrences), and a one-line **ask** — so the intake is legible at a glance.
@@ -171,6 +183,9 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 3. Relay the executor's summary in the report format above. GATE → approve
    protocol; ADVANCED/DONE → say what `/pipeline work` does next; BLOCKED after
    the agent's 3 rounds → show its blockers. STOP.
+4. When a run with a worktree reaches DONE (or is aborted), offer cleanup:
+   `pipeline worktree remove --run <id>` (add `--delete-branch` only once the
+   PR is merged). Never remove it unasked — the developer may still be using it.
 
 **In express mode**, `advance` auto-approves the quality gates, so a single
 `/pipeline work` may flow through several stages until it reaches the PR gate

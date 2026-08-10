@@ -51,11 +51,11 @@ If a gate is open, end with the one-line approval question (see
 artifact/diff instead of inlining it. Example:
 
 ```
-CI complete — MB-1234 · mb_rails4 · PR #29546 · CI GREEN
+CI complete — ABC-1234 · my_rails_app · PR #123 · CI GREEN
 
 Did this:
 1. All CI checks green (CodeQL, gitleaks, ruby-linters, Jest, qlty).
-2. PR #29546 (draft) targets master; deferred items carried in the body.
+2. PR #123 (draft) targets master; deferred items carried in the body.
 
 Skipped:
 1. RSpec suite in CI.

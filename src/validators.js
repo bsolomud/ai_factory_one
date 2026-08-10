@@ -85,7 +85,7 @@ export const validators = {
       if (entry.when && !files.some(f => matchesAny(f, [entry.when]))) continue
       // Scope {changed_files} to the files this command's `when` glob actually
       // matches, so e.g. `rubocop {changed_files}` (when **/*.rb) never receives
-      // a .md/.json path from a mixed changeset (MB-46745). Tests stay global —
+      // a .md/.json path from a mixed changeset (a real pilot failure). Tests stay global —
       // targetedTests already resolved them from the whole change.
       const scoped = entry.when ? files.filter(f => matchesAny(f, [entry.when])) : files
       const resolved = substitute(entry.run, { files: scoped, tests })
@@ -131,8 +131,8 @@ export const validators = {
   },
 
   // Deterministic secret scan over what the branch ADDS (committed diff +
-  // working tree + new untracked files, minus the ambient baseline). MB-46498
-  // reached the PR gate with a real support address as a committed config
+  // working tree + new untracked files, minus the ambient baseline). A pilot
+  // run reached the PR gate with a real support address as a committed config
   // default — one whole reopen cycle that a diff-time check catches at the
   // subtask gate. A deliberate dummy value is disarmed by putting
   // `pipeline:allow-secret` in a comment on the same line.
@@ -256,7 +256,7 @@ export const validators = {
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
-  // The MB-46745 class of plan defect, as an exit code: `advance` gates every
+  // A pilot-observed class of plan defect, as an exit code: `advance` gates every
   // subtask on green targeted tests, so a breaking change and the spec that
   // adapts to it MUST land in the same subtask — split them and the breaking
   // subtask can never pass its own gate. Requires each subtask to declare its
@@ -294,7 +294,7 @@ export const validators = {
       if (!claimedBy.has(p)) reasons.push(`'## Affected files' lists ${p} but no subtask claims it — add it to the Files of the subtask that changes it (or drop it from the plan)`)
     }
     // The load-bearing check: a source file's mapped spec must not live in a
-    // DIFFERENT subtask — that split is exactly what aborted MB-46745.
+    // DIFFERENT subtask — that split is exactly what aborted a pilot run.
     for (const st of subtasks) {
       for (const f of st.files) {
         for (const spec of targetedTests(ctx.repoDir, [f], ctx.profile)) {

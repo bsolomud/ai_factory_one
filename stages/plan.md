@@ -24,8 +24,8 @@ Subtasks, Testing strategy, Open questions.
 A breaking change and the spec that adapts to it MUST be the **same subtask**.
 `advance` runs the targeted specs at every subtask gate, so a change and the
 test that certifies it have to land together — split them and the breaking
-subtask can never pass its own gate in isolation (MB-46745: a model change and
-its spec-rewrite were split, and the change subtask blocked repeatedly).
+subtask can never pass its own gate in isolation (seen in a pilot run: a model
+change and its spec-rewrite were split, and the change subtask blocked repeatedly).
 - Never separate an API / model / signature / migration change from the specs it
   breaks. If updating file X forces spec Y to change, X and Y are one subtask.
 - Each subtask must be independently green: it compiles, its specs pass, nothing

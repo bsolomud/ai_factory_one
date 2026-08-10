@@ -59,7 +59,7 @@ export function runMetrics(runDir, runId, config = null) {
 
   const spawns = events.filter(e => e.event === 'agent_spawned')
   const skips = events.filter(e => e.event === 'check_skipped')
-  // Classify skips so a real UNVERIFIED isn't diluted (MB-46498 retro):
+  // Classify skips so a real UNVERIFIED isn't diluted (pilot retro finding):
   //  - real coverage gap: a REQUIRED slot is empty, OR source changed with no
   //    mirror spec ("possible coverage gap") — these should worry a pilot.
   //  - not_configured: an OPTIONAL slot (e.g. post_change_hooks) isn't set —
@@ -96,7 +96,7 @@ export function runMetrics(runDir, runId, config = null) {
     change_requests: changeRequests,
     // Prefer recorded substate; fall back to counting critic agent spawns, so a
     // dispatcher that ran the critic but forgot `set-substate critic_round` still
-    // reports the real engagement (MB-46498: critic ran 2 rounds, substate said 0).
+    // reports the real engagement (seen in a pilot: critic ran 2 rounds, substate said 0).
     critic_rounds: Math.max(maxSubstate(events, 'critic_round'), spawns.filter(e => /critic/i.test(e.label || '')).length),
     agents_spawned: spawns.length,
     agents_by_label: tally(spawns.map(e => (e.label || 'agent').replace(/-?(r?\d+|st\d+)$/i, '') || 'agent')),
@@ -107,7 +107,7 @@ export function runMetrics(runDir, runId, config = null) {
     // Rework: how much the run had to backtrack. reopened events are explicit
     // backward moves (e.g. a late fix at PR reopening IMPLEMENT); stage_reentries
     // counts every entry into a stage beyond its first. High rework explains a
-    // high agent count on a nominally small change (MB-46498: a PR-gate reopen).
+    // high agent count on a nominally small change (seen in a pilot: a PR-gate reopen).
     rework_cycles: reopens,
     stage_reentries: sum(Object.values(stages).map(s => Math.max(0, s.entries - 1))),
     feedback_notes: events.filter(e => e.event === 'feedback').length,

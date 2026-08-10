@@ -9,9 +9,7 @@ work; a small deterministic CLI certifies stage transitions. `advance` re-runs
 the stage's validators and refuses to move the state machine unless they exit 0.
 The model can claim anything; the FSM only believes exit codes.
 
-Design docs: `mb_rails4/pipeline-roadmap.md` (what/why),
-`mb_rails4/pipeline-implementation-plan.md` (full architecture),
-[`MVP-PLAN.md`](MVP-PLAN.md) (this MVP's scope + verification criteria).
+Design docs: [`MVP-PLAN.md`](MVP-PLAN.md) (this MVP's scope + verification criteria).
 
 ## Layout
 
@@ -96,7 +94,7 @@ answers and writes the result.
 ## Use — everything is `/pipeline ...`, typed in a Claude Code session
 
 ```
-/pipeline start MB-12345            # or a link, or plain text:
+/pipeline start ABC-12345           # or a link, or plain text:
 /pipeline start fix the login redirect looping on expired sessions
 ```
 

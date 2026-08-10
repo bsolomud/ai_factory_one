@@ -56,7 +56,7 @@ test('counts critic rounds, agents, feedback, skipped checks', () => {
   assert.equal(m.feedback_notes, 1)
 })
 
-test('critic_rounds falls back to critic agent spawns when substate was not recorded (MB-46498)', () => {
+test('critic_rounds falls back to critic agent spawns when substate was not recorded (pilot regression)', () => {
   const { root } = sandbox()
   const runDir = eventsRun(root, [
     { event: 'run_created', run: 'R', base: 'master' },

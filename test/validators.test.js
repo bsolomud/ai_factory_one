@@ -212,7 +212,7 @@ test('ac_traceability: un-numbered acceptance criteria block with the numbering 
 
 // --- no_secrets: committed credentials caught at the subtask gate, not at PR ---
 
-test('no_secrets: committed secret default and new-file token block; ENV lookup passes (MB-46498 class)', () => {
+test('no_secrets: committed secret default and new-file token block; ENV lookup passes (pilot-observed class)', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'v-secrets1')
   repo.git('checkout', '-qb', 'T-1')
@@ -246,14 +246,14 @@ test('no_secrets: ambient untracked files are not scanned; run-created ones are'
   assert.equal(validators.no_secrets(ctx).ok, true, 'developer scratch never blocks')
 })
 
-// --- subtask_coupling: the MB-46745 plan defect as an exit code ---
+// --- subtask_coupling: the pilot-observed plan defect as an exit code ---
 
-test('subtask_coupling: breaking change split from its adapting spec BLOCKS (MB-46745 regression)', () => {
+test('subtask_coupling: breaking change split from its adapting spec BLOCKS (pilot regression)', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'v-couple1')
   const ctx = ctxFor({ root, repoDir: repo.dir })
   // src/app.sh maps to tests/app_test.sh via test_layout — putting the spec in
-  // a different subtask is exactly the split that aborted MB-46745.
+  // a different subtask is exactly the split that aborted a pilot run.
   completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
     'Affected files': '- `src/app.sh`\n- `tests/app_test.sh`',
     Subtasks:
@@ -365,15 +365,15 @@ test('targetedTests maps changed src files to existing test files only', () => {
   assert.deepEqual(targetedTests(repo.dir, ['tests/app_test.sh'], profile), ['tests/app_test.sh'], 'changed test runs itself')
 })
 
-// MB-47027: a changed factory/helper under the test dir was passed verbatim to
-// the runner, which errored loading it → gate false-BLOCKED. Only files that
+// Pilot regression: a changed factory/helper under the test dir was passed verbatim
+// to the runner, which errored loading it → gate false-BLOCKED. Only files that
 // LOOK like runnable tests may ride the "changed file IS a test" branch.
 test('targetedTests: non-runnable files under a test dir are never targeted', () => {
   const { root } = sandbox()
   const repo = makeRepo(root, 'v-repo8')
   repo.write('app/models/one_roster/import.rb', 'class Import; end\n')
   repo.write('spec/models/one_roster/import_spec.rb', 'ok\n')
-  // no trailing slashes, like mb_rails4's real profile — exercises the dir+'/' normalization
+  // no trailing slashes, like a real Rails repo's profile — exercises the dir+'/' normalization
   const profile = { test_layout: { 'app/**': 'spec', 'app/packs/**': 'spec/packs' } }
   assert.deepEqual(targetedTests(repo.dir, ['spec/factories/one_roster/imports.rb'], profile), [], 'factory is not a runnable spec')
   assert.deepEqual(targetedTests(repo.dir, ['spec/support/shared_contexts/foo.rb'], profile), [], 'support file is not a runnable spec')
@@ -405,7 +405,7 @@ test('targetedTests: profile test_file_pattern overrides the default', () => {
 
 // --- P1a: changed-file scoping ---
 
-test('changedFiles: excludes ambient untracked by default; boundary opts in (MB-46745)', () => {
+test('changedFiles: excludes ambient untracked by default; boundary opts in (pilot regression)', () => {
   const { root } = sandbox()
   const repo = makeRepo(root, 'cf-repo')
   repo.write('a.txt', 'v1\n')
@@ -420,7 +420,7 @@ test('changedFiles: excludes ambient untracked by default; boundary opts in (MB-
   )
 })
 
-test('profile_command: {changed_files} scoped to the command\'s when-glob (MB-46745)', () => {
+test('profile_command: {changed_files} scoped to the command\'s when-glob (pilot regression)', () => {
   const { root } = sandbox()
   const repo = makeRepo(root, 'scope-repo')
   // Fails if handed anything that is not a .rb path — proves .md is not passed.

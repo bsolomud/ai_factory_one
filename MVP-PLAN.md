@@ -1,9 +1,7 @@
 # ai_factory_one — MVP Plan
 
-MVP of the AI development pipeline specified in
-`mb_rails4/pipeline-implementation-plan.md` (the *how*) and `mb_rails4/pipeline-roadmap.md`
-(the *what/why*). This repo is the **standalone, repo-agnostic** framework — it is never
-installed inside a target repo and writes nothing into one.
+MVP of the AI development pipeline. This repo is the **standalone, repo-agnostic**
+framework — it is never installed inside a target repo and writes nothing into one.
 
 **Status legend:** `[ ]` to do · `[x]` done (acceptance check passed) · `[~]` in progress
 
@@ -147,11 +145,11 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
   the full ambient `baseline_untracked` list from events.
   (2) **`subtask_coupling` validator** (PLAN+BREAKDOWN) — subtasks declare their
   slice of Affected files; exclusive claims, and a file's mapped spec must sit in
-  the same subtask. The real MB-46745 plan artifact, replayed, is BLOCKED.
+  the same subtask. The real plan artifact from the failed pilot, replayed, is BLOCKED.
   (3) **CONTEXT `## Decisions` checklist** (scope boundary / product intent /
   secrets-config policy / migration / out-of-scope) + **`no_secrets` validator**
   (IMPLEMENT+REVIEW): literal-credential scan of the branch diff and run-created
-  files; `pipeline:allow-secret` disarms deliberate dummies (MB-46498's PR-gate
+  files; `pipeline:allow-secret` disarms deliberate dummies (a pilot's PR-gate
   secret default would have been caught at the subtask gate).
   (4) **`human_rounds` metric** (THE pilot target: edited gates + change requests +
   reopens) + **`pipeline request-changes`** so a declined gate is recorded, reopens
@@ -211,11 +209,11 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
 - 2026-07-20 — Reconciled this plan with shipped state: added Post-MVP delivered/future
   sections incl. **parallel-tickets-via-worktrees**; corrected VC4 (express, not auto_low_risk).
 - 2026-07-20 — **Backward transitions** (`pipeline reopen <stage>`): surfaced by a live
-  portal run stuck at PR needing a one-line code change (guard correctly blocked the write).
+  pilot run stuck at PR needing a one-line code change (guard correctly blocked the write).
   Backward-only; drops gate approvals from the target stage onward; resets downstream
   artifacts to draft so TEST/REVIEW/PR re-run instead of sailing past stale `complete`
   stamps. SKILL documents it as the late-change path. 52/52 tests; rebuilt + reinstalled live.
-- 2026-07-20 — **First full live run (portal MB-46498)** reached SCRIBE + PR #988. Metrics:
+- 2026-07-20 — **First full live pilot run** reached SCRIBE + a draft PR. Metrics:
   first-pass-green 0.89 (8/9), gate-edit-rate 0.06 (1/18), critic caught 2 real bugs (race
   window in atomic-disable, spec not reproducing the named crash frame), 26 agents, ~2.8h wall.
   Two feedback gaps both ALREADY shipped (express, reopen). Fixed from this run's evidence:

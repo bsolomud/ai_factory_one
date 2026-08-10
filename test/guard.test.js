@@ -159,7 +159,7 @@ test('mark: a /pipeline prompt engages the session; ordinary prompts do not', ()
 
 test('unmark: session end clears enforcement', () => {
   const { repo } = setup({ stage: 'IMPLEMENT', engaged: false })
-  guard('mark', { session_id: 'S2', prompt: '/pipeline start MB-1' })
+  guard('mark', { session_id: 'S2', prompt: '/pipeline start ABC-1' })
   assert.equal(bashAs(repo, 'S2', 'git push').decision, 'deny', 'engaged → enforced')
   guard('unmark', { session_id: 'S2' })
   assert.equal(bashAs(repo, 'S2', 'git push').decision, 'allow', 'ended → no longer enforced')

@@ -37,5 +37,18 @@ if (unmerge) {
     if (!settings.permissions.allow.includes(rule)) { settings.permissions.allow.push(rule); added++ }
   }
   console.log(`codebase-memory-mcp: ${added} permission rule(s) merged into ${file}`)
+  // Backstop every cbm hook with a harness timeout: a wedged hook (the
+  // upstream SessionStart reminder deadlocked on a >512-byte heredoc) must
+  // stall a session for seconds, never freeze it. Stamps existing entries
+  // too, so re-running the addon heals live settings.
+  let stamped = 0
+  for (const entries of Object.values(settings.hooks || {})) {
+    for (const entry of entries) {
+      for (const h of entry.hooks || []) {
+        if (h.command?.includes('/hooks/cbm-') && h.timeout == null) { h.timeout = 10; stamped++ }
+      }
+    }
+  }
+  if (stamped) console.log(`codebase-memory-mcp: timeout stamped onto ${stamped} hook entr${stamped === 1 ? 'y' : 'ies'}`)
 }
 fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n')

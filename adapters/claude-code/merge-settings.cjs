@@ -5,6 +5,10 @@ let settings = {}
 if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, 'utf8'))
 settings.hooks ??= {}
 settings.hooks.PreToolUse ??= []
+// Every guard hook carries a harness-level timeout (seconds): the guard exits
+// in milliseconds and self-limits its stdin wait to 2s, so 10s is pure
+// backstop — a wedged guard must never freeze the session (fail open).
+const GUARD_TIMEOUT = 10
 const wanted = [
   { matcher: 'Bash', cmd: `${guardBin} bash` },
   { matcher: 'Edit|Write|NotebookEdit', cmd: `${guardBin} write` }
@@ -12,7 +16,7 @@ const wanted = [
 for (const { matcher, cmd } of wanted) {
   const present = settings.hooks.PreToolUse.some(entry =>
     (entry.hooks || []).some(h => h.command === cmd))
-  if (!present) settings.hooks.PreToolUse.push({ matcher, hooks: [{ type: 'command', command: cmd }] })
+  if (!present) settings.hooks.PreToolUse.push({ matcher, hooks: [{ type: 'command', command: cmd, timeout: GUARD_TIMEOUT }] })
 }
 
 // Session-scoped engagement: a `/pipeline` prompt MARKS the session; session end
@@ -26,7 +30,18 @@ const eventHooks = [
 for (const { event, cmd } of eventHooks) {
   settings.hooks[event] ??= []
   const present = settings.hooks[event].some(entry => (entry.hooks || []).some(h => h.command === cmd))
-  if (!present) settings.hooks[event].push({ hooks: [{ type: 'command', command: cmd }] })
+  if (!present) settings.hooks[event].push({ hooks: [{ type: 'command', command: cmd, timeout: GUARD_TIMEOUT }] })
+}
+
+// Upgrade-in-place: guard hook entries merged by an older install predate the
+// timeout — stamp it onto every existing guard hook so re-running the
+// installer heals live settings instead of only protecting fresh ones.
+for (const entries of Object.values(settings.hooks)) {
+  for (const entry of entries) {
+    for (const h of entry.hooks || []) {
+      if (h.command?.startsWith(guardBin) && h.timeout == null) h.timeout = GUARD_TIMEOUT
+    }
+  }
 }
 
 // Pre-approve the pipeline's own CLI + reading its home, so /pipeline never

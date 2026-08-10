@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { guard, main } from '../src/guard.js'
 import { newState, writeState } from '../src/state.js'
-import { installProfile, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
+import { installProfile, PACKAGE_ROOT, sandbox, standardRepo, STANDARD_PROFILE } from './helpers.js'
 
 // The default session used by the enforcement tests. Enforcement is opt-in per
 // session, so these tests simulate a session that already engaged /pipeline.
@@ -162,6 +163,18 @@ test('unmark: session end clears enforcement', () => {
   assert.equal(bashAs(repo, 'S2', 'git push').decision, 'deny', 'engaged → enforced')
   guard('unmark', { session_id: 'S2' })
   assert.equal(bashAs(repo, 'S2', 'git push').decision, 'allow', 'ended → no longer enforced')
+})
+
+test('guard entry never hangs: stdin without EOF exits fail-open within its deadline', async () => {
+  const { home } = sandbox()
+  const bin = path.join(PACKAGE_ROOT, 'bin', 'guard')
+  const child = spawn('node', [bin, 'mark'], { env: { ...process.env, AI_FACTORY_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] })
+  child.stdin.write('{"session_id":"s1","prompt":"/pipeline wo') // partial payload, EOF never sent
+  const code = await new Promise((resolve, reject) => {
+    const killer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('guard hung past its 2s stdin deadline — this freezes Claude sessions')) }, 5000)
+    child.on('exit', c => { clearTimeout(killer); resolve(c) })
+  })
+  assert.equal(code, 0, 'partial input → fail open, exit 0')
 })
 
 test('mark/unmark fail open on missing or malformed session ids', () => {

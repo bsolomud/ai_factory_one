@@ -1,7 +1,7 @@
 ---
 name: pipeline
-description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | ignore-untracked | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline pr-feedback triages reviewer comments on the open PR into a gated rework round; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -207,6 +207,40 @@ so TEST/REVIEW/PR genuinely re-run (not skipped on a stale `complete` stamp).
 Then make the change in IMPLEMENT, and `/pipeline work` re-advances forward
 through the gates as normal. Backward only — forward is always `advance`.
 Tell the developer you're reopening and why before you do it.
+
+## `/pipeline pr-feedback [<PR link or number>]` — work reviewer comments
+
+Reviewer comments on the run's PR are change requests from outside the
+session; work them as a triaged, gated rework round — never as ad-hoc edits.
+
+1. `pipeline status` (`--run <id>` if named). The run needs an open PR — the
+   CI stage or later; a DONE run can still take feedback (reopen works from
+   DONE).
+2. `pipeline agent-start pr-feedback-r<N> --repo <slug>`, then spawn
+   **pipeline-pr-feedback** (`phase: triage`; handoff + the PR reference,
+   runbook: `~/.ai_factory_one/stages/pr-feedback.md`). It fetches the
+   unresolved review threads (can't fetch → relay its paste-ask to the
+   developer, respawn with the pasted threads as developer input), verifies
+   each comment against the code, and writes the round into
+   `artifacts/09-pr-feedback.md`.
+3. Present its per-comment triage in the report format — one line per comment
+   (class + proposed action) under **Need you on this**; drafted replies for
+   answer-only/disputed rows under **Other**. The developer decides PER
+   COMMENT: accept / reject / defer. WAIT.
+4. Execute the decisions:
+   - Any accepted change → ONE reopen to the DEEPEST target the accepted set
+     needs (`reopen PLAN` if a design-change was accepted, else
+     `reopen IMPLEMENT`) with `--reason "PR feedback round <N>: <gist>"`, then
+     the normal `/pipeline work` loop — pass the accepted comments verbatim as
+     developer input to the stage agent. The rework re-earns the TEST/REVIEW/
+     PR gates; the re-push waits for the PR gate as always. (The reopen event
+     is what feeds human_rounds/rework — never work feedback without one.)
+   - Nothing accepted → no reopen; go straight to replies.
+5. Replies: once the developer approves the drafted replies (and any reworked
+   branch has been pushed), spawn **pipeline-pr-feedback** (`phase: reply`,
+   the approved replies listed in the handoff). It posts exactly those,
+   resolves exactly those threads, and updates the artifact's Outcome. Never
+   post or resolve anything without that approval.
 
 ## Boundary gate blocked on untracked files → `pipeline ignore-untracked`
 

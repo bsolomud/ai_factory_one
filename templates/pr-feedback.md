@@ -15,7 +15,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: what the reviewers want, what you propose. -->
 >
-> **Needs you** — <!-- e.g. "accept/reject each of the 3 proposed actions", or "Nothing yet." -->
+> **Needs you** — <!-- e.g. "3 reviewer comments: I suggest accept, accept, reject — decide each.", or "Nothing yet." -->
 
 ## Comments
 <!-- One row per unresolved review thread THIS round. Verify each claim against

@@ -13,7 +13,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: what the task is, in plain words. Bottom line up front. -->
 >
-> **Needs you** — <!-- the one thing the developer must decide at this gate, or "Nothing — criteria agreed." -->
+> **Needs you** — <!-- e.g. "Confirm: this covers X only, not Y — yes?", or "Nothing — criteria agreed." -->
 
 ## Requirements
 <!-- What the task asks for, in your own words. Cite the source (ticket /

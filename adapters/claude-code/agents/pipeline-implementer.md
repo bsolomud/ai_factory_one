@@ -21,3 +21,8 @@ conventions (profile commands + bound docs).
 - Commit the subtask as ONE commit with a message referencing it.
 - Return: what changed and why (short rationale per file), commands you ran
   with results, and any deviation you had to record.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

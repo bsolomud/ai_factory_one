@@ -16,7 +16,11 @@ questions for the developer — ambiguities, constraints, scope edges, what
 "done" means, AND the `## Decisions` checklist topics (scope boundary,
 product intent, secrets/config policy, migration/rollout, out-of-scope) —
 each with your best-guess default. A decision left unasked here surfaces at
-REVIEW or PR and costs a reopen cycle. Do NOT write the artifact yet.
+REVIEW or PR and costs a reopen cycle. Phrase every question in the
+developer's language — ask the concrete choice ("Should the fix also cover
+X?", "OK to read this from an env var?"); never emit internal checklist
+labels ("scope boundary", "secrets/config policy") as question text. The
+dispatcher relays your wording as-is. Do NOT write the artifact yet.
 
 **Phase 2 — write.** Your handoff contains the developer's answers verbatim.
 Write `artifacts/01-context.md` per the runbook — Requirements, **Acceptance
@@ -35,3 +39,8 @@ Never paste whole files back; summaries + the acceptance criteria only.
 still cite file paths, graph answers are leads, not citations. If the repo is
 not indexed or the tools are missing, fall back to Grep/Glob silently. Never
 index or delete a project.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

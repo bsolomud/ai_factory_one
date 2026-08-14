@@ -26,3 +26,8 @@ and the repo's test conventions.
 lists the affected symbols — `trace_path` from each finds the callers your
 coverage audit must account for. If the repo is not indexed or the tools are
 missing, fall back to Grep/Glob silently. Never index or delete a project.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

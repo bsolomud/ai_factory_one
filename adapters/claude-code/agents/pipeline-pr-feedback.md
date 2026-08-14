@@ -37,3 +37,8 @@ Respect the hard rules: NEVER edit repo files (triage is read-only on the
 repo; rework belongs to the implementer after a reopen); never run `reopen`,
 `advance`, or `approve`; never push; never post or resolve anything in the
 triage phase; disputed comments are the developer's call, never yours.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

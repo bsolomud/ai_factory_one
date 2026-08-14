@@ -265,6 +265,30 @@ test('set-autonomy switches modes mid-run', () => {
   assert.equal(run(['set-autonomy', 'nonsense']).verdict, 'ERROR')
 })
 
+// A run stacked on an open feature branch must diff against THAT branch, not the trunk —
+// with the trunk as base, lint/tests/boundary all take the whole feature branch as "the change".
+test('set-base retargets a stacked run; new-run --base sets it up front', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'base-repo')
+  installProfile(home, 'example.com-test-base-repo', STANDARD_PROFILE)
+  const run = args => cli(args, { home, cwd: repo.dir })
+
+  repo.git('checkout', '-q', '-b', 'feature/stacked')
+  repo.write('stacked.txt', 'work\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'stacked work')
+
+  run(['new-run', 'B-1'])
+  const retarget = run(['set-base', 'feature/stacked'])
+  assert.equal(retarget.from, 'master', 'started on the profile convention')
+  assert.equal(retarget.base, 'feature/stacked')
+  assert.equal(run(['set-base', 'feature/stacked']).note, 'already the run base — nothing changed', 'idempotent')
+  assert.equal(run(['set-base', 'no/such/branch']).verdict, 'ERROR', 'unresolvable base is refused, not silently accepted')
+  assert.equal(run(['set-base']).verdict, 'ERROR', 'missing argument is a usage error')
+
+  assert.equal(run(['new-run', 'B-2', '--base', 'feature/stacked']).verdict, 'CREATED')
+  assert.equal(run(['status', '--run', 'B-2']).verdict, 'ACTIVE_RUN')
+})
+
 // Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.
 test('works from any folder: NO_REPO → repos registry → --repo <slug>', { timeout: 60_000 }, () => {
   const { root, home } = sandbox()

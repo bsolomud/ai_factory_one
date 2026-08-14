@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
@@ -174,7 +175,10 @@ const commands = {
     if (fs.existsSync(runDir)) {
       return emit({ verdict: 'ERROR', error: `run ${runId} already exists — resume it via 'pipeline status --run ${runId}'` }, 1)
     }
-    const base = ctx.profile?.conventions?.base_branch || 'master'
+    // --base declares a run STACKED on an open feature branch, so "this change" is
+    // the diff from that branch and not from the trunk (see 'set-base' for why the
+    // wrong base poisons every validator). Default stays the profile's convention.
+    const base = flags.base || ctx.profile?.conventions?.base_branch || 'master'
     // Opt-in isolated working tree, so several runs can code in parallel without
     // sharing a checkout. Created BEFORE anything else — a failure creates no run.
     // Detached at base; the run's branch is created at BREAKDOWN inside this tree.
@@ -308,6 +312,37 @@ const commands = {
       stage: state.stage,
       stage_prompt: paths.asset(config.stages[state.stage].prompt),
       next_action: `stage ${state.stage} reopened for rework — dispatch the developer's change (their words: "${note}") to the stage's agent, then 'pipeline advance' re-validates and re-gates.`
+    })
+  },
+
+  // A run's base is what "this change" is diffed against — every validator, the
+  // write-boundary check and the targeted-test resolver derive their file set from
+  // it. `new-run` takes it from the profile convention (usually the trunk), which is
+  // wrong for a run STACKED on an open feature branch: the diff then spans that whole
+  // branch, so lint runs over hundreds of foreign files and targeted tests balloon
+  // into a suite run. The base is the one thing that cannot be inferred later, so it
+  // gets an explicit setter rather than a hand-edit of state.json.
+  'set-base'(positional, flags) {
+    const { runDir, state, ctx } = loadRun(flags)
+    const base = positional[0] || flags.base
+    if (!base) return emit({ verdict: 'ERROR', error: 'usage: pipeline set-base <branch-or-commit>' }, 1)
+    // Must be resolvable in the run's own tree, or every later diff silently returns
+    // nothing and the gates go quiet-green.
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: ctx.repoDir, stdio: 'pipe' })
+    } catch {
+      return emit({ verdict: 'ERROR', error: `'${base}' does not resolve to a commit in ${ctx.repoDir} — fetch it first, or pass a branch that exists locally` }, 1)
+    }
+    const from = state.git.base
+    if (from === base) return emit({ verdict: 'OK', base, note: 'already the run base — nothing changed' })
+    state.git.base = base
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'base_changed', from, to: base })
+    return emit({
+      verdict: 'OK',
+      base,
+      from,
+      note: `run base is now '${base}' — validators, the write boundary and targeted tests all diff against it from here on. Stage artifacts already written are NOT revisited.`
     })
   },
 

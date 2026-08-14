@@ -56,7 +56,21 @@ const allowWanted = [
   'Bash(pipeline:*)',
   'Bash(echo:*)',
   `Read(${home}/**)`,
-  'Read(~/.ai_factory_one/**)'
+  'Read(~/.ai_factory_one/**)',
+  // Pipeline-run git/gh commands. Safe to pre-approve because the guard hook
+  // above sequences them: guard.js denies `git push` until the PR gate is
+  // approved and denies `git commit` outside the implement stages — Claude
+  // Code prompting on top of that was pure friction at every run.
+  'Bash(git commit:*)',
+  'Bash(git push:*)',
+  'Bash(git worktree:*)',
+  'Bash(git branch:*)',
+  'Bash(gh pr create:*)',
+  'Bash(gh pr view:*)',
+  'Bash(gh pr edit:*)',
+  'Bash(gh run list:*)',
+  'Bash(gh run view:*)',
+  'Bash(gh run watch:*)'
 ]
 for (const rule of allowWanted) if (!settings.permissions.allow.includes(rule)) settings.permissions.allow.push(rule)
 settings.permissions.additionalDirectories ??= []

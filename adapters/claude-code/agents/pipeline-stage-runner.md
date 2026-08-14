@@ -23,3 +23,8 @@ prior decisions.
 
 Respect the hard rules: repo writes only in implementation stages; never
 touch state files; never push before the PR gate; never approve anything.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

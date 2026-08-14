@@ -13,7 +13,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: the headline learning from this run. -->
 >
-> **Needs you** — <!-- e.g. "approve the repo-doc diff proposal", or "Nothing." -->
+> **Needs you** — <!-- e.g. "OK to update the repo docs as proposed?", or "Nothing." -->
 
 ## Plan-vs-shipped
 <!-- Diff the approved plan (with amendments) against what shipped. Every

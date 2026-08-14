@@ -15,7 +15,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: current CI state. -->
 >
-> **Needs you** — <!-- e.g. "human merge of PR #13", or "Nothing yet." -->
+> **Needs you** — <!-- e.g. "CI is green — merge PR #13 when ready.", or "Nothing yet." -->
 
 ## Runs analyzed
 <!-- A table, one row per CI run. Columns: Run | Result | Failed jobs.

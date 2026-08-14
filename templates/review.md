@@ -19,7 +19,7 @@ findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }
 >
 > **TL;DR** — <!-- 1–2 sentences: the verdict and why. -->
 >
-> **Needs you** — <!-- what to arbitrate (see ## Disputed), or "Nothing — advance to PR." -->
+> **Needs you** — <!-- e.g. "Two ways to fix X — pick one (details below).", or "Nothing — ready for the PR." -->
 
 ## Findings
 <!-- A table, one row per finding (fresh-context review of the full branch diff),

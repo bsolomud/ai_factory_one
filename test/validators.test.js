@@ -420,6 +420,17 @@ test('changedFiles: excludes ambient untracked by default; boundary opts in (pil
   )
 })
 
+test('changedFiles: a path DELETED by the change is not handed to a linter (pilot regression)', () => {
+  const { root } = sandbox()
+  const repo = makeRepo(root, 'cf-repo-del')
+  repo.write('kept.rb', "puts 'kept'\n")
+  repo.write('gone.rb', "puts 'gone'\n")
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'init')
+  repo.write('kept.rb', "puts 'edited'\n")
+  repo.git('rm', '-q', 'gone.rb')
+  assert.deepEqual(changedFiles(repo.dir, 'master'), ['kept.rb'], 'deleted path excluded — it is not on disk to lint')
+})
+
 test('profile_command: {changed_files} scoped to the command\'s when-glob (pilot regression)', () => {
   const { root } = sandbox()
   const repo = makeRepo(root, 'scope-repo')
@@ -476,6 +487,54 @@ test('profile_command: opt-in test_fallback runs when targeted resolves empty bu
   }
   const result = validators.profile_command(ctx, 'test_targeted')
   assert.equal(result.ok, true, 'fallback ran and passed instead of recording UNVERIFIED')
+})
+
+test('profile_command: {targeted_specs} scoped to the command\'s when-glob in a mixed-language change (pilot regression)', () => {
+  const { root } = sandbox()
+  const repo = makeRepo(root, 'mixed-lang-repo')
+  // Stand-ins for rspec/jest: each fails if handed a spec of the other language,
+  // which is exactly how the real failure surfaced (rspec exit 1 on a .test.js path
+  // while reporting 0 failures).
+  repo.write('only_rb.sh', '#!/usr/bin/env bash\nfor f in "$@"; do [[ "$f" == *.rb ]] || { echo "got non-rb: $f"; exit 1; }; done\nexit 0\n')
+  repo.write('only_js.sh', '#!/usr/bin/env bash\nfor f in "$@"; do [[ "$f" == *.js ]] || { echo "got non-js: $f"; exit 1; }; done\nexit 0\n')
+  repo.write('app/thing.rb', '# ruby\n')
+  repo.write('app/thing.js', '// js\n')
+  repo.write('spec/thing_spec.rb', '# ruby spec\n')
+  repo.write('spec/thing.test.js', '// js spec\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'init')
+  repo.write('app/thing.rb', '# ruby v2\n')
+  repo.write('app/thing.js', '// js v2\n')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = {
+    commands: {
+      test_targeted: [
+        { run: './only_rb.sh {targeted_specs}', when: '**/*.rb' },
+        { run: './only_js.sh {targeted_specs}', when: '**/*.js' }
+      ]
+    },
+    test_layout: { 'app/**': 'spec' }
+  }
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.ok, true, 'each language command received only its own specs')
+})
+
+test('profile_command: directory-style when-glob still receives the full spec set', () => {
+  const { root } = sandbox()
+  const repo = makeRepo(root, 'dir-glob-repo')
+  // A spec under spec/** matches neither `app/**` nor the changed file's path, so
+  // scoping alone would empty {targeted_specs} and silently skip the command.
+  repo.write('run_tests.sh', '#!/usr/bin/env bash\n[[ $# -gt 0 ]] || { echo "no specs passed"; exit 1; }\nexit 0\n')
+  repo.write('app/thing.rb', '# ruby\n')
+  repo.write('spec/thing_spec.rb', '# ruby spec\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'init')
+  repo.write('app/thing.rb', '# ruby v2\n')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  ctx.profile = {
+    commands: { test_targeted: [{ run: './run_tests.sh {targeted_specs}', when: 'app/**' }] },
+    test_layout: { 'app/**': 'spec' }
+  }
+  const result = validators.profile_command(ctx, 'test_targeted')
+  assert.equal(result.ok, true, 'fell back to the full spec set instead of skipping the command')
 })
 
 // --- P3: optional slots are "not configured", not a coverage gap ---

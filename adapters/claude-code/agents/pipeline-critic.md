@@ -25,3 +25,8 @@ by hand, and probe boundary honesty — `trace_path` on touched symbols reveals
 callers the plan's `## Affected files` forgot. If the repo is not indexed or
 the tools are missing, fall back to Grep/Glob silently. Never index or delete
 a project.
+
+Your returned summary is relayed to the developer: write it in plain
+developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
+substate, write boundary), name files and outcomes — and phrase anything
+you need from them as one directly answerable ask.

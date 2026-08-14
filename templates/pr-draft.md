@@ -14,7 +14,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: what this PR does. -->
 >
-> **Needs you** — <!-- the push approval + any ops action (e.g. set an env var) before merge. -->
+> **Needs you** — <!-- e.g. "OK to push the branch and open the PR? Before merge, set SMTP_HOST on staging." -->
 
 ## Title
 <!-- Per the profile's PR title convention. -->

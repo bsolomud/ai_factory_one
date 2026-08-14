@@ -16,7 +16,7 @@ critic: { rounds: 0, blocking_open: 0 }
 >
 > **TL;DR** — <!-- 1–2 sentences: what ships and why. -->
 >
-> **Needs you** — <!-- e.g. "Approve to start IMPLEMENT", or a blocking open question. -->
+> **Needs you** — <!-- e.g. "OK to build it this way? Two files change.", or the one question blocking the build. -->
 
 ## Approach
 <!-- The technical approach: chosen pattern and why. Confidence notes: which

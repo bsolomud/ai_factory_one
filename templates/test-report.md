@@ -15,7 +15,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1–2 sentences: coverage state and any gap. -->
 >
-> **Needs you** — <!-- deferrals to accept at the gate, or "Nothing." -->
+> **Needs you** — <!-- e.g. "Two edge cases left untested (below) — OK to ship without them?", or "Nothing." -->
 
 ## Coverage audit
 <!-- A table, one row per changed file. Columns: File | Tests | Gaps.

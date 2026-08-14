@@ -48,6 +48,9 @@ change and its spec-rewrite were split, and the change subtask blocked repeatedl
    - **Blocking findings** → planner revises (mode revise), fresh critic
      re-checks. Hard cap 2 rounds; still blocking → both positions attached
      to `## Open questions`, escalated to the developer.
+   - **Zero blocking findings in round 1** → skip the re-check entirely: pass
+     the advisory findings to Finalize and continue. The second round exists
+     to verify fixes to blocking findings, not to re-read a clean plan.
    - **Advisory findings** → folded into `## Risks` / `## Open questions`.
    - The critique is stored as `artifacts/02-plan-critique.md`.
 4. **Finalize** (`pipeline-planner`, mode finalize): verify traceability —

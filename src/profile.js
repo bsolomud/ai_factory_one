@@ -118,7 +118,13 @@ export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
       return ''
     }
   }
-  for (const f of run(['diff', '--name-only', base]).split('\n')) if (f.trim()) out.add(f.trim())
+  // --diff-filter=d drops DELETED paths. A path the change removed is still
+  // "changed", but it no longer exists in the worktree, so handing it to a linter
+  // is an error, not a finding: `rubocop <deleted>.rb` exits 2 with "No such file
+  // or directory" and false-BLOCKS the gate for every later stage. Same failure
+  // class as the untracked-files note above — the linter must only ever see files
+  // that are on disk right now.
+  for (const f of run(['diff', '--name-only', '--diff-filter=d', base]).split('\n')) if (f.trim()) out.add(f.trim())
   if (includeUntracked) {
     for (const f of run(['ls-files', '--others', '--exclude-standard']).split('\n')) if (f.trim()) out.add(f.trim())
   }

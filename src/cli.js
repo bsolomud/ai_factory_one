@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
@@ -149,7 +150,7 @@ const commands = {
       stage_status: state.stage_status,
       autonomy: state.autonomy,
       substate: state.substate,
-      unverified: state.unverified,
+      unverified: (state.unverified || []).map(u => u.text ?? u),
       reconcile_notes: notes,
       stage_prompt: def ? paths.asset(def.prompt) : null,
       run_dir: runDir,
@@ -174,7 +175,10 @@ const commands = {
     if (fs.existsSync(runDir)) {
       return emit({ verdict: 'ERROR', error: `run ${runId} already exists — resume it via 'pipeline status --run ${runId}'` }, 1)
     }
-    const base = ctx.profile?.conventions?.base_branch || 'master'
+    // --base declares a run STACKED on an open feature branch, so "this change" is
+    // the diff from that branch and not from the trunk (see 'set-base' for why the
+    // wrong base poisons every validator). Default stays the profile's convention.
+    const base = flags.base || ctx.profile?.conventions?.base_branch || 'master'
     // Opt-in isolated working tree, so several runs can code in parallel without
     // sharing a checkout. Created BEFORE anything else — a failure creates no run.
     // Detached at base; the run's branch is created at BREAKDOWN inside this tree.
@@ -247,12 +251,24 @@ const commands = {
       }
     }
     const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
-    const unverifiedTexts = result.unverified.map(u => u.text)
-    for (const t of unverifiedTexts) if (!state.unverified.includes(t)) state.unverified.push(t)
+    // Legacy runs stored unverified as plain strings; normalize to objects so
+    // the stage-scoping below has one shape to handle. A legacy string only
+    // survives as a gap if it reads like one.
+    state.unverified = (state.unverified || []).map(u =>
+      typeof u === 'string'
+        ? { stage: null, text: u, kind: (/coverage gap/i.test(u) && !/not a coverage gap/i.test(u)) ? 'no_command' : 'other' }
+        : u)
+    // not_configured = an optional slot the repo never set up (e.g.
+    // post_change_hooks). Harmless by definition — audit-logged as a
+    // check_skipped event below, but never surfaced to the developer.
+    const surfaced = result.unverified.filter(u => u.kind !== 'not_configured')
+    for (const u of surfaced) {
+      if (!state.unverified.some(e => e.text === u.text)) state.unverified.push({ stage: stageName, text: u.text, kind: u.kind })
+    }
     if (!result.ok) {
       appendEvent(runDir, { event: 'blocked', stage: stageName, reasons: result.reasons.length })
       writeState(runDir, state)
-      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: unverifiedTexts }, 1)
+      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text) }, 1)
     }
     for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u.text, kind: u.kind })
     const gate = stageDef.gate || { required: false }
@@ -271,7 +287,7 @@ const commands = {
       verdict: 'GATE',
       stage: stageName,
       subtask: state.substate.subtask ?? undefined,
-      unverified: state.unverified,
+      unverified: state.unverified.map(u => u.text ?? u),
       human_required: !!gate.human_required,
       next_action: `validators passed — present the artifact/diff to the developer for review; on their explicit yes run '/pipeline approve'. STOP here.`
     })
@@ -308,6 +324,37 @@ const commands = {
       stage: state.stage,
       stage_prompt: paths.asset(config.stages[state.stage].prompt),
       next_action: `stage ${state.stage} reopened for rework — dispatch the developer's change (their words: "${note}") to the stage's agent, then 'pipeline advance' re-validates and re-gates.`
+    })
+  },
+
+  // A run's base is what "this change" is diffed against — every validator, the
+  // write-boundary check and the targeted-test resolver derive their file set from
+  // it. `new-run` takes it from the profile convention (usually the trunk), which is
+  // wrong for a run STACKED on an open feature branch: the diff then spans that whole
+  // branch, so lint runs over hundreds of foreign files and targeted tests balloon
+  // into a suite run. The base is the one thing that cannot be inferred later, so it
+  // gets an explicit setter rather than a hand-edit of state.json.
+  'set-base'(positional, flags) {
+    const { runDir, state, ctx } = loadRun(flags)
+    const base = positional[0] || flags.base
+    if (!base) return emit({ verdict: 'ERROR', error: 'usage: pipeline set-base <branch-or-commit>' }, 1)
+    // Must be resolvable in the run's own tree, or every later diff silently returns
+    // nothing and the gates go quiet-green.
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: ctx.repoDir, stdio: 'pipe' })
+    } catch {
+      return emit({ verdict: 'ERROR', error: `'${base}' does not resolve to a commit in ${ctx.repoDir} — fetch it first, or pass a branch that exists locally` }, 1)
+    }
+    const from = state.git.base
+    if (from === base) return emit({ verdict: 'OK', base, note: 'already the run base — nothing changed' })
+    state.git.base = base
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'base_changed', from, to: base })
+    return emit({
+      verdict: 'OK',
+      base,
+      from,
+      note: `run base is now '${base}' — validators, the write boundary and targeted tests all diff against it from here on. Stage artifacts already written are NOT revisited.`
     })
   },
 
@@ -391,7 +438,7 @@ const commands = {
       stage_status: state.stage_status,
       autonomy: state.autonomy,
       substate: state.substate,
-      unverified: state.unverified,
+      unverified: (state.unverified || []).map(u => u.text ?? u),
       current_artifact: artifactRel || null,
       artifact_status: artifact?.frontmatter?.status ?? null,
       artifact_body: artifact?.body ?? null,
@@ -618,6 +665,11 @@ function resetArtifactStatus(file) {
 function transition(runDir, config, state, { by }) {
   const next = config.stages[state.stage].next
   appendEvent(runDir, { event: 'advanced', from: state.stage, to: next, by })
+  // Stage-local skips (not-applicable commands etc.) die with their stage;
+  // only real coverage gaps (no_command) follow the run to later gates —
+  // that's the "no false green" contract without re-announcing the same
+  // skip at every gate forever.
+  state.unverified = (state.unverified || []).filter(u => typeof u !== 'string' && u.kind === 'no_command')
   state.stage = next
   state.stage_status = next === 'DONE' ? 'complete' : 'in_progress'
   writeState(runDir, state)

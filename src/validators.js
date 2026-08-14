@@ -74,7 +74,7 @@ export const validators = {
     if (entries.length === 0) {
       return REQUIRED_SLOTS.includes(slot)
         ? skip(`profile slot '${slot}' is empty for this repo — check skipped, recorded as UNVERIFIED (a real coverage gap; add the command via '/pipeline onboard')`, 'no_command')
-        : skip(`optional slot '${slot}' is not configured for this repo — not applicable, recorded as UNVERIFIED (not a coverage gap)`, 'not_configured')
+        : skip(`optional slot '${slot}' is not configured for this repo — skipped (not a coverage gap; nothing to do)`, 'not_configured')
     }
     const files = ctxChangedFiles(ctx)
     const tests = targetedTests(ctx.repoDir, files, ctx.profile)
@@ -85,10 +85,19 @@ export const validators = {
       if (entry.when && !files.some(f => matchesAny(f, [entry.when]))) continue
       // Scope {changed_files} to the files this command's `when` glob actually
       // matches, so e.g. `rubocop {changed_files}` (when **/*.rb) never receives
-      // a .md/.json path from a mixed changeset (a real pilot failure). Tests stay global —
-      // targetedTests already resolved them from the whole change.
+      // a .md/.json path from a mixed changeset (a real pilot failure).
       const scoped = entry.when ? files.filter(f => matchesAny(f, [entry.when])) : files
-      const resolved = substitute(entry.run, { files: scoped, tests })
+      // Same for {targeted_specs}: a mixed-language subtask resolves specs for
+      // BOTH languages, and handing the whole union to every matching command
+      // makes `rspec` choke on a .test.js path (and `jest` on a _spec.rb one) —
+      // a real pilot failure that blocked advance on green work. Extension-style
+      // globs (**/*.rb, **/*.js) scope specs correctly because a spec shares its
+      // subject's extension. Directory-style globs (app/**) match no spec under
+      // spec/**, so scoping would empty the list and silently skip the command —
+      // fall back to the full set there, preserving the previous behavior.
+      const scopedTests = entry.when ? tests.filter(f => matchesAny(f, [entry.when])) : tests
+      const testsForCmd = scopedTests.length ? scopedTests : tests
+      const resolved = substitute(entry.run, { files: scoped, tests: testsForCmd })
       if (resolved.skip) { skipped.push(`'${entry.run}' skipped: ${resolved.skip}`); continue }
       try {
         execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000 })

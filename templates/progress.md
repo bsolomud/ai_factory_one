@@ -14,7 +14,7 @@ status: draft
 >
 > **TL;DR** — <!-- 1 sentence: where implementation stands. -->
 >
-> **Needs you** — <!-- the current subtask gate to approve, or "Nothing in flight." -->
+> **Needs you** — <!-- e.g. "Step 2 of 3 done — OK to continue?", or "Nothing in flight." -->
 
 ## Subtasks
 <!-- One entry per plan subtask: `- [ ] N. <title>` — checked when its gate is

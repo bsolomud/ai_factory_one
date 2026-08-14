@@ -39,7 +39,10 @@ line only when an item needs a word on what it is or why.
   result, tests added, checks that passed). Concrete outcomes, not narration.
 - **Skipped:** — anything deliberately not done or not verified. Name the
   thing, then a `Description:` line saying what it is and why it was skipped.
-  Fold EVERY `unverified` entry from the CLI in here (they repeat at each gate).
+  Fold the CLI's `unverified` entries in here, translated per the writing
+  rules below — the CLI already scopes them: each skip appears once, at the
+  gate where it happened; an entry that persists into later gates is a real
+  test-coverage gap.
 - **Need you on this:** — decisions or approvals only the developer can make.
   The gate approval itself goes here, plus any choice the executor surfaced.
   Phrase each as a plain ask.
@@ -68,6 +71,23 @@ Need you on this:
 Other:
 1. Two DevOps-owned items deferred (request.host provenance; nginx /.well-known/ passthrough).
 ```
+
+### Writing for the developer — translate, don't relay
+
+Everything under the report headings is for a human who does not know this
+pipeline's internals. Rules:
+- TRANSLATE internal text; never paste it. CLI reasons, validator messages,
+  and agent notes are written for models — rewrite each as a plain outcome,
+  one line ("the repo has no lint command set up, so lint wasn't run").
+- NO internal vocabulary in developer-facing lines: slot, UNVERIFIED,
+  substate, artifact, frontmatter, write boundary, human_required, validator
+  or skip-kind names. Say files, commands, and outcomes instead.
+- One plain ask per **Need you on this** item, ≤2 lines, answerable in a
+  word ("yes", "A or B", a value).
+- Keep the whole report ≤15 lines unless the developer asks for more.
+- Pipeline mechanics (command hygiene, reopen semantics, re-baselining,
+  autonomy plumbing) are YOUR concerns: give the developer the one-line
+  consequence, not the mechanism. Explain mechanisms only when asked.
 
 ## The handoff block (fill from `pipeline status` output; pass to every agent)
 
@@ -134,7 +154,8 @@ yet — so spawn the onboarder agent directly.)
    **source** (ticket id / link / "pasted text"), any **ids** (e.g. Airbrake,
    occurrences), and a one-line **ask** — so the intake is legible at a glance.
 3. Spawn **pipeline-context** (handoff, `phase: 1`). Relay its questions to
-   the developer verbatim; wait.
+   the developer as written — the agent phrases them plainly (see its def);
+   do not add pipeline vocabulary. Wait.
 4. Spawn **pipeline-context** (fresh, `phase: 2`, answers verbatim). It writes
    the context artifact + acceptance criteria and advances.
 5. Present its summary — especially the acceptance criteria — AND recommend an
@@ -170,9 +191,12 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 2. Report `reconcile_notes` if any. `awaiting_gate` → approve protocol. Else
    dispatch ONE stage by `stage`, then STOP (one stage per invocation):
    - **PLAN** → **pipeline-planner** (`mode: draft`) → **pipeline-architect**
-     on the artifact → **pipeline-critic** (adversarial, ≤2 rounds; findings
-     → planner `mode: revise`, fresh critic re-check) → planner
-     (`mode: finalize`). Relay only findings summaries between them.
+     on the artifact → **pipeline-critic** (adversarial). Round 1 with ZERO
+     blocking findings → go straight to planner (`mode: finalize`), handing
+     it the advisory findings to fold into Risks/Open questions — no second
+     critic pass. Blocking findings → planner (`mode: revise`) → ONE fresh
+     critic re-check (hard cap 2 rounds; still blocking → escalate to the
+     developer). Relay only findings summaries between them.
    - **BREAKDOWN / PR / CI / SCRIBE** → **pipeline-stage-runner**.
    - **IMPLEMENT** → **pipeline-implementer** (current subtask from
      `substate`; it implements, checks green, commits, advances).
@@ -275,7 +299,8 @@ Own agent, interactive via two phases:
 
 1. Present exactly what is being approved in the report format above (header +
    Did this / Skipped / Need you on this / Other). The gate ask goes under
-   **Need you on this**; every `unverified` entry goes under **Skipped**.
+   **Need you on this**; every `unverified` entry the CLI returned for THIS
+   gate goes under **Skipped**, translated per the writing rules.
 2. Ask for explicit confirmation; WAIT.
 3. Only on an explicit yes in the developer's own words:
    `pipeline approve --note "<their words>"`. If the developer changed the
@@ -314,4 +339,6 @@ part of the job, not optional.
 - Never write repo files outside implementation stages.
 - Never `git push` before the PR gate is approved; never merge, ever.
 - `pipeline approve` only via the protocol above.
-- Repeat `unverified` entries at every gate — no false green.
+- Relay every `unverified` entry the CLI returns at a gate — no false green.
+  (The CLI shows each skip once and carries only coverage gaps forward; you
+  never re-list old stage-local skips yourself.)

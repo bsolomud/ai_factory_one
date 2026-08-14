@@ -90,6 +90,8 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   gate = advance()
   assert.equal(gate.verdict, 'GATE')
   assert.equal(gate.subtask, 1)
+  assert.ok(!gate.unverified.some(t => /not configured/.test(t)),
+    'optional not_configured slots (post_change_hooks) never surface at a gate')
   let approved = approve()
   assert.equal(approved.stage, 'IMPLEMENT', 'per-subtask gate loops within the stage')
   assert.equal(approved.subtask, 2)
@@ -265,6 +267,30 @@ test('set-autonomy switches modes mid-run', () => {
   assert.equal(run(['set-autonomy', 'nonsense']).verdict, 'ERROR')
 })
 
+// A run stacked on an open feature branch must diff against THAT branch, not the trunk —
+// with the trunk as base, lint/tests/boundary all take the whole feature branch as "the change".
+test('set-base retargets a stacked run; new-run --base sets it up front', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'base-repo')
+  installProfile(home, 'example.com-test-base-repo', STANDARD_PROFILE)
+  const run = args => cli(args, { home, cwd: repo.dir })
+
+  repo.git('checkout', '-q', '-b', 'feature/stacked')
+  repo.write('stacked.txt', 'work\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'stacked work')
+
+  run(['new-run', 'B-1'])
+  const retarget = run(['set-base', 'feature/stacked'])
+  assert.equal(retarget.from, 'master', 'started on the profile convention')
+  assert.equal(retarget.base, 'feature/stacked')
+  assert.equal(run(['set-base', 'feature/stacked']).note, 'already the run base — nothing changed', 'idempotent')
+  assert.equal(run(['set-base', 'no/such/branch']).verdict, 'ERROR', 'unresolvable base is refused, not silently accepted')
+  assert.equal(run(['set-base']).verdict, 'ERROR', 'missing argument is a usage error')
+
+  assert.equal(run(['new-run', 'B-2', '--base', 'feature/stacked']).verdict, 'CREATED')
+  assert.equal(run(['status', '--run', 'B-2']).verdict, 'ACTIVE_RUN')
+})
+
 // Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.
 test('works from any folder: NO_REPO → repos registry → --repo <slug>', { timeout: 60_000 }, () => {
   const { root, home } = sandbox()
@@ -296,4 +322,84 @@ test('works from any folder: NO_REPO → repos registry → --repo <slug>', { ti
   assert.equal(cli(['advance', '--repo', 'example.com-test-anywhere-repo'], { home, cwd: elsewhere }).verdict, 'GATE')
   assert.equal(cli(['approve', '--repo', 'example.com-test-anywhere-repo', '--note', 'yes, approved'], { home, cwd: elsewhere }).stage, 'PLAN')
   assert.equal(repos.repos[0].active_runs !== undefined, true, 'repos lists active runs')
+})
+
+// Unverified entries are stage-scoped: a stage-local skip (no_target) shows at
+// its own gate and dies at the stage transition; only real coverage gaps
+// (no_command — a required slot the repo never configured) follow the run to
+// later gates. Optional not_configured slots never surface at all.
+test('unverified skips are scoped to their stage; only coverage gaps persist', { timeout: 120_000 }, () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'skips-repo')
+  repo.write('config.txt', 'cfg-v1\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'add config')
+  // lint_changed (required) missing → a genuine coverage gap; post_change_hooks
+  // (optional) missing → must never reach a gate.
+  installProfile(home, 'example.com-test-skips-repo', `
+repo: git@example.com:test/skips-repo.git
+commands:
+  test_targeted: "./run_tests.sh {targeted_specs}"
+test_layout: { "src/**": "tests/" }
+conventions:
+  base_branch: master
+`)
+  const run = args => cli(args, { home, cwd: repo.dir })
+  const runDir = path.join(home, 'repos', 'example.com-test-skips-repo', 'runs', 'N-1')
+  const approve = () => { const r = run(['approve']); assert.equal(r.code, 0, JSON.stringify(r)); return r }
+
+  run(['new-run', 'N-1'])
+  completeArtifact(runDir, 'artifacts/01-context.md', 'N-1', 'CONTEXT',
+    contextSections({ 'Acceptance criteria': '1. config says cfg-v2' }))
+  assert.equal(run(['advance']).verdict, 'GATE'); approve()
+
+  completeArtifact(runDir, 'artifacts/02-plan.md', 'N-1', 'PLAN', {
+    Approach: 'Edit the config.', 'Affected files': '- `config.txt`',
+    Risks: 'None.', Subtasks: '1. cfg — `config.txt`',
+    'Testing strategy': 'none applicable', 'Open questions': 'None.'
+  })
+  assert.equal(run(['advance']).verdict, 'GATE'); approve()
+
+  completeArtifact(runDir, 'artifacts/03-progress.md', 'N-1', 'BREAKDOWN',
+    { Subtasks: '- [ ] 1. cfg', Deviations: 'None.' })
+  assert.equal(run(['set-substate', 'subtask=1', 'of=1']).verdict, 'OK')
+  assert.equal(run(['advance']).verdict, 'GATE'); approve()
+
+  // IMPLEMENT: a config-only change → test_targeted maps to no target (stage-local
+  // skip); lint_changed is a required slot with no command (coverage gap).
+  repo.git('checkout', '-qb', 'N-1')
+  repo.write('config.txt', 'cfg-v2\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'N-1 subtask 1: config')
+  const implGate = run(['advance'])
+  assert.equal(implGate.verdict, 'GATE')
+  assert.ok(implGate.unverified.some(t => /lint_changed/.test(t) && /coverage gap/.test(t)),
+    'missing required slot surfaces as a coverage gap')
+  assert.ok(implGate.unverified.some(t => /not applicable to this change/.test(t)),
+    'stage-local no_target skip surfaces at its own gate')
+  assert.ok(!implGate.unverified.some(t => /not configured/.test(t)),
+    'optional not_configured slot never surfaces')
+  approve()
+
+  completeArtifact(runDir, 'artifacts/04-test-report.md', 'N-1', 'TEST', {
+    'Coverage audit': 'config.txt has no executable behavior.',
+    'Risk-to-test map': 'AC#1 → verified manually (config value).',
+    'Added tests': 'None needed.', Deferred: 'None.'
+  })
+  assert.equal(run(['advance']).verdict, 'GATE'); approve()
+
+  completeArtifact(runDir, 'artifacts/05-review.md', 'N-1', 'REVIEW', {
+    Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'Matches plan.'
+  }, CLEAN_REVIEW_COUNTS)
+  assert.equal(run(['advance']).verdict, 'GATE'); approve()
+
+  // PR runs no profile commands: what shows here is only what PERSISTED.
+  completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'N-1', 'PR', {
+    Title: 'N-1 config update', Description: 'Per plan.', 'Testing notes': 'n/a',
+    'Ops notes': 'None.', 'Reviewer guidance': 'config.txt.'
+  })
+  const prGate = run(['advance'])
+  assert.equal(prGate.verdict, 'GATE')
+  assert.ok(prGate.unverified.some(t => /lint_changed/.test(t) && /coverage gap/.test(t)),
+    'the coverage gap follows the run to the PR gate')
+  assert.ok(!prGate.unverified.some(t => /not applicable to this change/.test(t)),
+    'stage-local skips do not reappear at later gates')
 })

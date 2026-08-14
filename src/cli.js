@@ -150,7 +150,7 @@ const commands = {
       stage_status: state.stage_status,
       autonomy: state.autonomy,
       substate: state.substate,
-      unverified: state.unverified,
+      unverified: (state.unverified || []).map(u => u.text ?? u),
       reconcile_notes: notes,
       stage_prompt: def ? paths.asset(def.prompt) : null,
       run_dir: runDir,
@@ -251,12 +251,24 @@ const commands = {
       }
     }
     const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
-    const unverifiedTexts = result.unverified.map(u => u.text)
-    for (const t of unverifiedTexts) if (!state.unverified.includes(t)) state.unverified.push(t)
+    // Legacy runs stored unverified as plain strings; normalize to objects so
+    // the stage-scoping below has one shape to handle. A legacy string only
+    // survives as a gap if it reads like one.
+    state.unverified = (state.unverified || []).map(u =>
+      typeof u === 'string'
+        ? { stage: null, text: u, kind: (/coverage gap/i.test(u) && !/not a coverage gap/i.test(u)) ? 'no_command' : 'other' }
+        : u)
+    // not_configured = an optional slot the repo never set up (e.g.
+    // post_change_hooks). Harmless by definition — audit-logged as a
+    // check_skipped event below, but never surfaced to the developer.
+    const surfaced = result.unverified.filter(u => u.kind !== 'not_configured')
+    for (const u of surfaced) {
+      if (!state.unverified.some(e => e.text === u.text)) state.unverified.push({ stage: stageName, text: u.text, kind: u.kind })
+    }
     if (!result.ok) {
       appendEvent(runDir, { event: 'blocked', stage: stageName, reasons: result.reasons.length })
       writeState(runDir, state)
-      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: unverifiedTexts }, 1)
+      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text) }, 1)
     }
     for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u.text, kind: u.kind })
     const gate = stageDef.gate || { required: false }
@@ -275,7 +287,7 @@ const commands = {
       verdict: 'GATE',
       stage: stageName,
       subtask: state.substate.subtask ?? undefined,
-      unverified: state.unverified,
+      unverified: state.unverified.map(u => u.text ?? u),
       human_required: !!gate.human_required,
       next_action: `validators passed — present the artifact/diff to the developer for review; on their explicit yes run '/pipeline approve'. STOP here.`
     })
@@ -426,7 +438,7 @@ const commands = {
       stage_status: state.stage_status,
       autonomy: state.autonomy,
       substate: state.substate,
-      unverified: state.unverified,
+      unverified: (state.unverified || []).map(u => u.text ?? u),
       current_artifact: artifactRel || null,
       artifact_status: artifact?.frontmatter?.status ?? null,
       artifact_body: artifact?.body ?? null,
@@ -653,6 +665,11 @@ function resetArtifactStatus(file) {
 function transition(runDir, config, state, { by }) {
   const next = config.stages[state.stage].next
   appendEvent(runDir, { event: 'advanced', from: state.stage, to: next, by })
+  // Stage-local skips (not-applicable commands etc.) die with their stage;
+  // only real coverage gaps (no_command) follow the run to later gates —
+  // that's the "no false green" contract without re-announcing the same
+  // skip at every gate forever.
+  state.unverified = (state.unverified || []).filter(u => typeof u !== 'string' && u.kind === 'no_command')
   state.stage = next
   state.stage_status = next === 'DONE' ? 'complete' : 'in_progress'
   writeState(runDir, state)

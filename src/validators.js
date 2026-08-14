@@ -74,7 +74,7 @@ export const validators = {
     if (entries.length === 0) {
       return REQUIRED_SLOTS.includes(slot)
         ? skip(`profile slot '${slot}' is empty for this repo — check skipped, recorded as UNVERIFIED (a real coverage gap; add the command via '/pipeline onboard')`, 'no_command')
-        : skip(`optional slot '${slot}' is not configured for this repo — not applicable, recorded as UNVERIFIED (not a coverage gap)`, 'not_configured')
+        : skip(`optional slot '${slot}' is not configured for this repo — skipped (not a coverage gap; nothing to do)`, 'not_configured')
     }
     const files = ctxChangedFiles(ctx)
     const tests = targetedTests(ctx.repoDir, files, ctx.profile)

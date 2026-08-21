@@ -57,6 +57,12 @@ export function runDir(slug, runId) {
   return path.join(repoHome(slug), 'runs', runId)
 }
 
+// Per-repo learned-facts store (written by SCRIBE, read by CONTEXT/PLAN):
+// one fact per file plus an index.md with one line per fact.
+export function knowledgeDir(slug) {
+  return path.join(repoHome(slug), 'knowledge')
+}
+
 // Per-run working trees live under the pipeline home (like all run state):
 // the installed Claude Code permissions already cover the home, so any
 // session can work in a worktree with zero settings changes.

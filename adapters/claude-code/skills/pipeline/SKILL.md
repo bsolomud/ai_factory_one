@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline pr-feedback triages reviewer comments on the open PR into a gated rework round; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -99,6 +99,8 @@ Self-contained run context (you have NO other conversation context):
   commands target THIS tree — use absolute paths / `git -C <workdir> …`
   whenever your cwd differs; other checkouts of this repo belong to other runs)
 - run: <run id> · run_dir: <run_dir>  (artifacts in <run_dir>/artifacts/)
+- knowledge: <knowledge_dir from status>  (the repo's learned-facts store —
+  read its index.md when the runbook routes you there; SCRIBE writes to it)
 - stage: <STAGE> · runbook: <stage_prompt>  (read it FIRST, follow it)
 - base branch: <base> · task input: <run_dir>/artifacts/00-ticket.md
 - phase/mode: <phase or mode, when applicable>
@@ -141,7 +143,10 @@ yet — so spawn the onboarder agent directly.)
 ## `/pipeline start <ticket-id | link | plain text>`
 
 1. `pipeline status`. NO_PROFILE → run the `/pipeline onboard` flow below
-   first. PROFILE_STALE → onboard flow (re-sync). Matching ACTIVE_RUN → `work`.
+   first. PROFILE_STALE → onboard flow (re-sync); `new-run` also refuses to
+   start on stale evidence. ACTIVE_RUN carrying a `stale_note` → surface the
+   note (one line) and continue the run — re-sync happens before the NEXT
+   run, never mid-run. Matching ACTIVE_RUN → `work`.
 2. Run id: ticket id if present, else a short kebab slug. `pipeline new-run
    <id>` — **add `--worktree` when `status` showed other active run(s) in this
    repo, or the developer says they'll work tickets in parallel**: the run then
@@ -279,6 +284,21 @@ snapshots the CURRENTLY-untracked files as ambient; the gate then leaves exactly
 that set alone. First confirm with the developer that the listed files are
 genuinely theirs — this is a deliberate escape hatch, so never run it to silence
 a file the pipeline itself created outside the plan. Then re-run `advance`.
+
+## Recurring "not applicable" skips on a shaped run → `pipeline declare-na`
+
+Some run shapes make a check structurally inapplicable — a lockfile-only
+dependency bump maps to no lintable or testable file, so the same "not
+applicable to this change" note re-surfaces at every gate. Once (and only
+once) the developer confirms the run's shape, declare it:
+`pipeline declare-na <slot> --reason "<the shape>" --repo <slug> --run <id>`
+(e.g. `declare-na test_targeted --reason "lockfile-only dependency bump"`).
+From then on that slot's no-target skips are recorded quietly in the audit
+log instead of being re-explained at each gate. This is bookkeeping, not a
+bypass: the command still runs — and still blocks on red — whenever changed
+files match it, and real coverage gaps (source changed with no spec) still
+surface. Undo with `--clear`. Never declare a slot N/A to silence a failing
+or gap-reporting check.
 
 ## `/pipeline onboard [path]`
 

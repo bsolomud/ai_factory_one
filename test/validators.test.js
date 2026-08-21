@@ -569,3 +569,59 @@ test('globToRegex: **, * and !(x) segment negation', () => {
   assert.ok(globToRegex('*.md').test('README.md'))
   assert.ok(!globToRegex('*.md').test('docs/README.md'))
 })
+
+test('pathsInSection hardening: prose mentions and backticked commands are not path claims (FP-2)', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-repo-prose')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files':
+      'The vendored gems live under `GEM/specs`; verify locally first.\n' +
+      '\n' +
+      '| Path | Change | New? |\n' +
+      '|------|--------|------|\n' +
+      '| `src/app.sh` | edit | |\n' +
+      '- run `./run_tests.sh tests/app_test.sh` before pushing'
+  })
+  const result = validators.files_exist_in_repo(ctx, 'Affected files')
+  assert.equal(result.ok, true,
+    `prose paragraphs and backticked commands must not block: ${JSON.stringify(result.reasons)}`)
+})
+
+test('git_clean_within: a path mentioned only in prose is outside the boundary — touching it blocks loudly', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-repo-prose2')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'T-1', 'PLAN', {
+    'Affected files':
+      'We may also need `src/util.sh` eventually.\n' +
+      '\n' +
+      '| Path | Change | New? |\n' +
+      '|------|--------|------|\n' +
+      '| `src/app.sh` | edit | |'
+  })
+  repo.write('src/app.sh', 'echo changed\n')   // in the table → allowed
+  repo.write('src/util.sh', 'echo changed\n')  // only in prose → NOT in the boundary
+  const result = validators.git_clean_within(ctx)
+  assert.equal(result.ok, false, 'narrowed extraction fails loud, never silently widens')
+  assert.match(result.reasons.find(r => r.includes('src/util.sh')), /outside the approved plan/)
+})
+
+test('profile_command: declared_na re-labels only the no-target skip; red checks still block', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'v-repo-na')
+  const state = newState({ runId: 'T-1', repo: 'r', stage: 'IMPLEMENT' })
+  state.slots_na = { lint_changed: 'lockfile-only dependency bump' }
+
+  // No changed files → the slot resolves to no target → quiet declared_na kind.
+  const quiet = validators.profile_command(ctxFor({ root, repoDir: repo.dir, state }), 'lint_changed')
+  assert.equal(quiet.skip, true)
+  assert.equal(quiet.kind, 'declared_na')
+  assert.match(quiet.reason, /declared not-applicable/)
+
+  // A runnable red check is never hidden by the declaration.
+  repo.write('src/app.sh', 'echo LINTFAIL\n')
+  const red = validators.profile_command(ctxFor({ root, repoDir: repo.dir, state }), 'lint_changed')
+  assert.equal(red.ok, false, 'declaration must not silence a failing check')
+  assert.match(red.reasons[0], /command failed/)
+})

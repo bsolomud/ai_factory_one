@@ -11,8 +11,10 @@ review it and continue — do not assume a clean slate.
    at intake). If you cannot resolve an id to content, ask the developer to
    paste the ticket body — never invent requirements.
 2. The repo's knowledge layer: the profile's `knowledge` binding (curated
-   docs) or the pipeline home `knowledge/index.md`. Read the index, then only
-   the facts it routes to for this feature area.
+   docs) or this repo's learned-facts store — the `knowledge_dir` reported by
+   `pipeline status` (`repos/<slug>/knowledge/` in the pipeline home; written
+   by SCRIBE). Read its `index.md`, then only the facts it routes to for this
+   feature area. No index yet → nothing learned yet; move on.
 3. The actual code the knowledge layer points to.
 
 ## Output

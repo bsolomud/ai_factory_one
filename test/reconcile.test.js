@@ -123,3 +123,14 @@ test('IMPLEMENT: git wins — committed subtask vs interrupted subtask reported'
   result = reconcile({ runDir, repoDir: repo.dir, config, runId: 'T-1', repoSlug: 'r' })
   assert.match(result.notes.join(' '), /appears committed.*pipeline advance/)
 })
+
+test('rebuild: N/A slot declarations replayed from events, a later clear wins', () => {
+  const { root } = sandbox()
+  const runDir = scaffoldRun(root)
+  appendEvent(runDir, { event: 'slot_declared_na', slot: 'lint_changed', reason: 'lockfile-only bump' })
+  appendEvent(runDir, { event: 'slot_declared_na', slot: 'test_targeted', reason: 'lockfile-only bump' })
+  appendEvent(runDir, { event: 'slot_na_cleared', slot: 'test_targeted' })
+  const { state } = reconcile({ runDir, repoDir: null, config, runId: 'T-1', repoSlug: 'r' })
+  assert.deepEqual(state.slots_na, { lint_changed: 'lockfile-only bump' },
+    'declarations survive a state rebuild; cleared slots stay cleared')
+})

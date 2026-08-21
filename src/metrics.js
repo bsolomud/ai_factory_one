@@ -75,6 +75,7 @@ export function runMetrics(runDir, runId, config = null) {
         : 'no_target')
   const notConfiguredSkips = skips.filter(e => kindOf(e) === 'not_configured').length
   const noCommandSkips = skips.filter(e => kindOf(e) === 'no_command').length
+  const declaredNaSkips = skips.filter(e => kindOf(e) === 'declared_na').length
 
   return {
     run: runId,
@@ -103,7 +104,8 @@ export function runMetrics(runDir, runId, config = null) {
     checks_skipped: skips.length,
     checks_skipped_no_command: noCommandSkips,
     checks_skipped_not_configured: notConfiguredSkips,
-    checks_skipped_no_target: skips.length - noCommandSkips - notConfiguredSkips,
+    checks_skipped_declared_na: declaredNaSkips,
+    checks_skipped_no_target: skips.length - noCommandSkips - notConfiguredSkips - declaredNaSkips,
     // Rework: how much the run had to backtrack. reopened events are explicit
     // backward moves (e.g. a late fix at PR reopening IMPLEMENT); stage_reentries
     // counts every entry into a stage beyond its first. High rework explains a

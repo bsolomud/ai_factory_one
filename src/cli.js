@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { hashPath, scanAssets } from './scan.js'
 import { loadPipeline } from './config.js'
-import { currentBranch, loadProfile, resolveSlot, validateProfile, untrackedFiles } from './profile.js'
+import { currentBranch, loadProfile, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { parseArtifact } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -104,20 +104,27 @@ const commands = {
         profile_path: paths.profilePath(ctx.slug)
       })
     }
+    // Stale evidence blocks NEW runs (see new-run), never work in flight: on a
+    // high-velocity repo PROFILE_STALE re-fired several times a day mid-run,
+    // each forcing a full re-sync that changed nothing. With a run active it
+    // is a note; with none it is the hard verdict, as before.
     const stale = staleEvidence(ctx)
-    if (stale.length) {
-      return emit({
-        verdict: 'PROFILE_STALE',
-        repo: ctx.slug,
-        changed_evidence: stale,
-        next_action: `profile evidence changed (${stale.join(', ')}) — re-verify the affected commands per stages/onboard.md re-sync flow, update evidence_hashes, then re-run`
-      })
-    }
     const runs = listRuns(ctx.slug)
     const active = runs.filter(r => r.stage !== 'DONE')
     if (active.length === 0) {
+      if (stale.length) {
+        return emit({
+          verdict: 'PROFILE_STALE',
+          repo: ctx.slug,
+          changed_evidence: stale,
+          next_action: `profile evidence changed (${stale.join(', ')}) — re-verify the affected commands per stages/onboard.md re-sync flow, update evidence_hashes, then re-run`
+        })
+      }
       return emit({ verdict: 'NO_ACTIVE_RUN', repo: ctx.slug, finished_runs: runs.length, next_action: 'ask the developer for a ticket, then: pipeline new-run <id>' })
     }
+    const staleNote = stale.length
+      ? `profile evidence changed (${stale.join(', ')}) — this run continues; re-sync per stages/onboard.md before starting the next run (new-run blocks until then)`
+      : null
     const wtRun = flags.run ? null : runForWorktree(ctx.slug, ctx.repoDir)
     const selected = flags.run ? active.find(r => r.id === flags.run)
       : wtRun ? active.find(r => r.id === wtRun)
@@ -127,6 +134,7 @@ const commands = {
         verdict: 'ACTIVE_RUN',
         repo: ctx.slug,
         runs: active.map(r => ({ id: r.id, stage: r.stage })),
+        ...(staleNote && { stale_note: staleNote }),
         next_action: `multiple runs in flight — re-run with --run <id> to select one`
       })
     }
@@ -154,7 +162,9 @@ const commands = {
       reconcile_notes: notes,
       stage_prompt: def ? paths.asset(def.prompt) : null,
       run_dir: runDir,
+      knowledge_dir: paths.knowledgeDir(ctx.slug),
       worktree: state.git?.worktree || null,
+      ...(staleNote && { stale_note: staleNote }),
       next_action: nextAction(state)
     })
   },
@@ -171,6 +181,18 @@ const commands = {
       return emit({ verdict: 'ERROR', error: `invalid --autonomy '${flags.autonomy}' (${AUTONOMY_MODES.join(' | ')})` }, 1)
     }
     const ctx = resolveRepo(flags, { requireProfile: true })
+    // The stale gate lives HERE, not on work in flight: a new run must start
+    // from verified evidence, but status downgrades staleness to a note while
+    // any run is active (re-sync at most once per run, not once per session).
+    const stale = staleEvidence(ctx)
+    if (stale.length) {
+      return emit({
+        verdict: 'PROFILE_STALE',
+        repo: ctx.slug,
+        changed_evidence: stale,
+        next_action: `profile evidence changed (${stale.join(', ')}) — re-verify the affected commands per stages/onboard.md re-sync flow, update evidence_hashes, then start the run`
+      }, 1)
+    }
     const runDir = paths.runDir(ctx.slug, runId)
     if (fs.existsSync(runDir)) {
       return emit({ verdict: 'ERROR', error: `run ${runId} already exists — resume it via 'pipeline status --run ${runId}'` }, 1)
@@ -259,14 +281,22 @@ const commands = {
         ? { stage: null, text: u, kind: (/coverage gap/i.test(u) && !/not a coverage gap/i.test(u)) ? 'no_command' : 'other' }
         : u)
     // not_configured = an optional slot the repo never set up (e.g.
-    // post_change_hooks). Harmless by definition — audit-logged as a
-    // check_skipped event below, but never surfaced to the developer.
-    const surfaced = result.unverified.filter(u => u.kind !== 'not_configured')
+    // post_change_hooks); declared_na = a slot the developer declared
+    // not-applicable to this run's shape. Both harmless by definition —
+    // audit-logged as check_skipped events below, never surfaced.
+    const surfaced = result.unverified.filter(u => u.kind !== 'not_configured' && u.kind !== 'declared_na')
     for (const u of surfaced) {
       if (!state.unverified.some(e => e.text === u.text)) state.unverified.push({ stage: stageName, text: u.text, kind: u.kind })
     }
     if (!result.ok) {
-      appendEvent(runDir, { event: 'blocked', stage: stageName, reasons: result.reasons.length })
+      // Retros could never say WHAT blocked (only how much) — keep the count
+      // for log symmetry and add the first line of each reason, truncated.
+      appendEvent(runDir, {
+        event: 'blocked',
+        stage: stageName,
+        reasons: result.reasons.length,
+        reason_texts: result.reasons.map(r => r.split('\n')[0].slice(0, 200))
+      })
       writeState(runDir, state)
       return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text) }, 1)
     }
@@ -628,6 +658,40 @@ const commands = {
       previously: before,
       files,
       note: `${files.length} currently-untracked file(s) snapshotted as ambient — the write-boundary gate will leave them alone for this run. Untracked files created after this point are still enforced. Re-run 'pipeline advance'.`
+    })
+  },
+
+  // Declare a profile slot not-applicable to THIS run's shape (e.g. lint/test
+  // slots on a lockfile-only dependency bump), so its recurring "not applicable
+  // to this change" skip stops re-surfacing at every gate. Safety: the
+  // declaration only re-labels a skip that was happening anyway — the slot's
+  // commands still run whenever changed files match, and a red check still
+  // blocks. Event-sourced so a state rebuild preserves it.
+  'declare-na'(positional, flags) {
+    const { ctx, runDir, state } = loadRun(flags)
+    const slot = positional[0]
+    const validSlots = [...new Set([...Object.keys(ctx.profile?.commands || {}), ...REQUIRED_SLOTS])]
+    if (!slot || !validSlots.includes(slot)) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline declare-na <slot> --reason "<why>" [--clear] — slot must be one of: ${validSlots.join(', ')}` }, 1)
+    }
+    state.slots_na ??= {}
+    if (flags.clear) {
+      delete state.slots_na[slot]
+      appendEvent(runDir, { event: 'slot_na_cleared', slot })
+      writeState(runDir, state)
+      return emit({ verdict: 'OK', slots_na: state.slots_na, note: `slot '${slot}' declaration cleared — its skips surface normally again` })
+    }
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : ''
+    if (!reason) {
+      return emit({ verdict: 'ERROR', error: `declare-na needs --reason "<why this check cannot apply to this run>" — the reason lands in the audit log` }, 1)
+    }
+    state.slots_na[slot] = reason
+    appendEvent(runDir, { event: 'slot_declared_na', slot, reason })
+    writeState(runDir, state)
+    return emit({
+      verdict: 'OK',
+      slots_na: state.slots_na,
+      note: `slot '${slot}' declared not-applicable for this run — its no-target skips are recorded quietly instead of re-surfacing at every gate. The command still runs (and still blocks on red) whenever changed files match it.`
     })
   },
 

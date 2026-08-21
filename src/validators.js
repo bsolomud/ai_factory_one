@@ -134,6 +134,14 @@ export const validators = {
         }
         return skip(`slot '${slot}': source files changed with NO mirror spec: ${needsSpecs.join(', ')} — add a spec (preferred) or verify manually; recorded as UNVERIFIED (possible coverage gap). Define commands.test_fallback in the profile to auto-cover this case.`, 'no_command')
       }
+      // A developer-declared N/A slot (declare-na) only re-labels this exact
+      // outcome — a no-target skip — to the quiet kind, so a dependency-bump
+      // run stops re-explaining the same skip at every gate. It never applies
+      // to a coverage gap (needsSpecs above) or a red check (reasons above).
+      const na = ctx.state?.slots_na?.[slot]
+      if (na) {
+        return skip(`slot '${slot}': declared not-applicable for this run ("${na}") and resolved to no target — skipped quietly`, 'declared_na')
+      }
       return skip(`slot '${slot}': not applicable to this change — the changed files map to no ${slot} target (${skipped.join('; ') || 'no matching files'}). Expected for config/view/spec-only changes; recorded as UNVERIFIED for the audit trail, not a coverage gap. Run a broader check yourself if the change warrants it.`, 'no_target')
     }
     return ok()

@@ -10,7 +10,7 @@ const STAGE_STATUSES = ['in_progress', 'awaiting_gate', 'complete']
 // Owned HERE because it is a cross-file protocol: validators write kinds,
 // metrics buckets by them, and events are frozen on disk — a typo'd kind
 // would be a permanently misclassified event no writer-side fix can repair.
-export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'other']
+export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'declared_na', 'other']
 
 export function newState({ runId, repo, stage, base, branch, baselineUntracked, worktree }) {
   return {
@@ -24,7 +24,11 @@ export function newState({ runId, repo, stage, base, branch, baselineUntracked, 
     gates:          [],
     git:            { branch: branch || null, base: base || 'master', worktree: worktree || null, last_sha: null, baseline_untracked: baselineUntracked || [] },
     session_ids:    {},
-    unverified:     []
+    unverified:     [],
+    // Slots the developer declared not-applicable for this run's shape (e.g. a
+    // lockfile-only dependency bump), via `declare-na`. Only re-labels a skip
+    // that would happen anyway — never silences a runnable check.
+    slots_na:       {}
   }
 }
 

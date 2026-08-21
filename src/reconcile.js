@@ -106,6 +106,12 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   for (const e of events) {
     if (e.event === 'substate' && e.key in state.substate) state.substate[e.key] = e.value
   }
+  // Replay N/A slot declarations (latest event per slot wins) — set only in
+  // state they would evaporate on every rebuild.
+  for (const e of events) {
+    if (e.event === 'slot_declared_na') (state.slots_na ??= {})[e.slot] = e.reason || ''
+    else if (e.event === 'slot_na_cleared') delete (state.slots_na ??= {})[e.slot]
+  }
   return state
 }
 

@@ -14,7 +14,10 @@ review it and continue — do not assume a clean slate.
    docs) or this repo's learned-facts store — the `knowledge_dir` reported by
    `pipeline status` (`repos/<slug>/knowledge/` in the pipeline home; written
    by SCRIBE). Read its `index.md`, then only the facts it routes to for this
-   feature area. No index yet → nothing learned yet; move on.
+   feature area. No index yet → nothing learned yet; move on. Record every
+   fact or curated doc you actually consult — `pipeline used knowledge <fact>`
+   / `pipeline used doc <path>` — so the assets report can tell living
+   knowledge from dead weight.
 3. The actual code the knowledge layer points to.
 
 ## Output

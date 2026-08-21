@@ -4,7 +4,7 @@ Make the next run on this repo smarter. The knowledge layer is the product.
 
 ## Inputs
 Every artifact of this run + `events.jsonl` (gate notes, blocked reasons,
-skipped checks).
+skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
 
 ## Output
 `artifacts/08-retro.md`. Required sections: Plan-vs-shipped, Learnings, Routing.
@@ -16,6 +16,12 @@ skipped checks).
 - **Learnings** (as a table: Learning | Type | Routed to | Status): harvest
   gotchas — developer corrections at gates, recurring critic findings, CI
   failure patterns, UNVERIFIED checks that mattered.
+- **Asset audit**: run `pipeline assets`. A knowledge fact or bound skill with
+  zero uses across runs is a pruning candidate (stale? unfindable index hook?
+  genuinely dead?) — and an asset that was consulted but proved wrong or thin
+  is an improvement candidate. Route each such observation as a learning like
+  any other (proposed removals/rewrites go to the developer, never applied
+  unilaterally).
 - **Routing** — each learning goes to exactly one place:
   - **Repo with curated docs** → draft the doc diff and present it to the
     developer. THIS IS THE ONLY CASE where the pipeline may touch repo files

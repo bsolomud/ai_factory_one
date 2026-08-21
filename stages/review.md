@@ -6,7 +6,8 @@ Catch issues while fixing them is private and cheap — before a PR exists.
 1. The FULL branch diff vs the base branch (not per-subtask).
 2. The profile's `review` binding: **if a repo review skill is bound, use it
    as-is** — it is the single source of truth (it may match a CI reviewer).
-   Otherwise use the built-in passes below.
+   Otherwise use the built-in passes below. When you use a bound repo skill,
+   record it: `pipeline used skill <its path>` (feeds the assets report).
 3. `artifacts/02-plan.md` for the architecture check.
 
 ## Output

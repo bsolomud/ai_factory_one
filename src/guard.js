@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { currentBranch, loadProfile, matchesAny } from './profile.js'
-import { readState } from './state.js'
+import { appendEvent, readState } from './state.js'
 import * as paths from './paths.js'
 
 // PreToolUse hook: enforcement OUTSIDE the model. Exit 0 = allow,
@@ -69,6 +69,7 @@ export function guard(mode, input) {
     // may land in some run's worktree, which identifies the run by itself.
     if (mode === 'bash') return run ? guardBash(input.tool_input?.command || '', run) : allow()
     if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, active, cwd })
+    if (mode === 'observe') return run ? observeUsage(input, run) : allow()
     return allow()
   } catch {
     return allow() // fail open, always
@@ -152,6 +153,28 @@ function guardWrite(filePath, { repoDir, profile, run, active, cwd }) {
   if (!WRITE_STAGES.includes(target.state.stage)) {
     return deny(`repo writes are not allowed during the ${target.state.stage} stage (pipeline run ${target.state.run_id} is active). ${target.state.stage} only produces its artifact in the run directory; code changes happen in IMPLEMENT.`)
   }
+  return allow()
+}
+
+// Passive usage ledger — NEVER denies. Records which MCP tools and skills a
+// run's agents actually invoke, so `pipeline assets` can show what is used
+// and what is dead weight. Captured here (not by agent self-report) because
+// the hook sees every tool call deterministically. The dispatcher's own
+// pipeline skill is not an asset worth tracking — every run trivially uses it.
+function observeUsage(input, run) {
+  try {
+    const tool = input.tool_name || ''
+    let kind = null
+    let ref = null
+    if (tool.startsWith('mcp__')) { kind = 'mcp'; ref = tool }
+    else if (tool === 'Skill') {
+      const skill = input.tool_input?.skill
+      if (skill && skill !== 'pipeline') { kind = 'skill'; ref = skill }
+    }
+    if (kind && ref) {
+      appendEvent(run.runDir, { event: 'asset_used', kind, ref, stage: run.state.stage, source: 'hook' })
+    }
+  } catch { /* the ledger must never break a tool call */ }
   return allow()
 }
 

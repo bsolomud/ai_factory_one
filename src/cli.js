@@ -695,6 +695,85 @@ const commands = {
     })
   },
 
+  // Self-reported usage ledger: a stage agent records each repo asset it
+  // actually consulted — a knowledge fact, a bound repo skill, a curated doc.
+  // (MCP-tool and skill INVOCATIONS are captured automatically by the guard's
+  // observe hook; this verb covers what hooks can't see: file reads.) The
+  // ledger feeds `pipeline assets`, which shows what earns its place and what
+  // is dead weight.
+  used(positional, flags) {
+    const { runDir, state } = loadRun(flags)
+    const KINDS = ['knowledge', 'skill', 'doc', 'runbook', 'mcp']
+    const [kind, ...refParts] = positional
+    const ref = refParts.join(' ').trim()
+    if (!KINDS.includes(kind) || !ref) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline used <${KINDS.join('|')}> <ref> — e.g. 'pipeline used knowledge oversized-payload-500' or 'pipeline used skill .claude/skills/code-review'` }, 1)
+    }
+    appendEvent(runDir, { event: 'asset_used', kind, ref, stage: state.stage, source: 'agent', ...(typeof flags.note === 'string' && flags.note ? { note: flags.note } : {}) })
+    return emit({ verdict: 'OK', recorded: { kind, ref }, note: 'usage recorded — feeds the per-repo assets report (pipeline assets)' })
+  },
+
+  // Usage report for the repo's knowledge/skill assets: inventory (bound repo
+  // skills/docs from the profile + knowledge fact files) joined against every
+  // run's asset_used events. Zero uses across runs = a pruning candidate; the
+  // SCRIBE runbook routes those as learnings.
+  assets(_, flags) {
+    const ctx = resolveRepo(flags, { requireProfile: true })
+    const norm = ref => String(ref).replace(/\.md$/, '').replace(/^\.\//, '').replace(/\/$/, '')
+    const inventory = []
+    for (const [capability, b] of Object.entries(ctx.profile?.bindings || {})) {
+      // The knowledge binding points at curated docs, not a skill.
+      if (b?.source === 'repo' && b.path) inventory.push({ kind: capability === 'knowledge' ? 'doc' : 'skill', ref: norm(b.path), capability })
+    }
+    const kdir = paths.knowledgeDir(ctx.slug)
+    if (fs.existsSync(kdir)) {
+      for (const f of fs.readdirSync(kdir)) {
+        if (f.endsWith('.md') && f !== 'index.md') inventory.push({ kind: 'knowledge', ref: norm(f) })
+      }
+    }
+    const usage = []
+    const mcpTools = {}
+    for (const r of listRuns(ctx.slug)) {
+      for (const e of readEvents(paths.runDir(ctx.slug, r.id))) {
+        if (e.event !== 'asset_used') continue
+        if (e.kind === 'mcp') { mcpTools[e.ref] = (mcpTools[e.ref] || 0) + 1; continue }
+        usage.push({ kind: e.kind, ref: norm(e.ref), run: r.id })
+      }
+    }
+    // An asset counts as used when a usage ref matches its normalized path or
+    // its basename (agents cite facts by name, skills by path or name), or
+    // when the ref lives UNDER the asset's path — a bound docs DIRECTORY is
+    // used through reads of the files inside it.
+    const matches = (item, u) =>
+      (u.kind === item.kind && (u.ref === item.ref || path.basename(u.ref) === path.basename(item.ref)))
+      || u.ref === item.ref || u.ref.startsWith(item.ref + '/')
+    const claimed = new Set()
+    const assets = inventory.map(item => {
+      const hits = usage.filter(u => matches(item, u))
+      hits.forEach(u => claimed.add(u))
+      const runs = [...new Set(hits.map(u => u.run))]
+      return { ...item, uses: hits.length, runs: runs.length, last_used: runs.at(-1) ?? null }
+    })
+    const unused = assets.filter(a => a.uses === 0).map(a => `${a.kind}: ${a.ref}`)
+    // Usage that matched no inventory item (docs, runbooks, since-deleted
+    // facts) still matters — it shows what agents lean on.
+    const unmatchedTally = {}
+    for (const u of usage) {
+      if (!claimed.has(u)) unmatchedTally[`${u.kind}: ${u.ref}`] = (unmatchedTally[`${u.kind}: ${u.ref}`] || 0) + 1
+    }
+    return emit({
+      verdict: 'OK',
+      repo: ctx.slug,
+      assets,
+      unused,
+      other_usage: unmatchedTally,
+      mcp_tools: mcpTools,
+      note: unused.length
+        ? `${unused.length} asset(s) never consulted by any run — review whether they earn their place (stale? unfindable index hook? genuinely dead?) before removing`
+        : 'every tracked asset has been consulted by at least one run'
+    })
+  },
+
   reconcile(_, flags) {
     const ctx = resolveRepo(flags, { requireProfile: true })
     const runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)

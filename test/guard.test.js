@@ -183,3 +183,30 @@ test('mark/unmark fail open on missing or malformed session ids', () => {
   assert.equal(guard('mark', { session_id: '../evil', prompt: '/pipeline work' }).decision, 'allow', 'path-traversal id rejected, not written')
   assert.equal(guard('unmark', {}).decision, 'allow')
 })
+
+test('observe: mcp and skill invocations recorded to the resolved run; never denies', () => {
+  const { repo, runDir } = setup({ stage: 'PLAN' })
+  const obs = (tool_name, tool_input = {}) =>
+    guard('observe', { cwd: repo.dir, session_id: SESSION, tool_name, tool_input })
+
+  assert.equal(obs('mcp__somegraph__search_graph').decision, 'allow')
+  assert.equal(obs('Skill', { skill: 'code-review' }).decision, 'allow')
+  assert.equal(obs('Skill', { skill: 'pipeline' }).decision, 'allow', 'dispatcher skill allowed but not tracked')
+  assert.equal(obs('Skill', {}).decision, 'allow', 'malformed input fails open')
+
+  const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8')
+    .trim().split('\n').map(l => JSON.parse(l))
+  const used = events.filter(e => e.event === 'asset_used')
+  assert.equal(used.length, 2, 'only the mcp tool and the non-pipeline skill are recorded')
+  assert.deepEqual(used.map(e => [e.kind, e.ref, e.stage, e.source]), [
+    ['mcp', 'mcp__somegraph__search_graph', 'PLAN', 'hook'],
+    ['skill', 'code-review', 'PLAN', 'hook']
+  ])
+})
+
+test('observe: unengaged session and no-run repo record nothing', () => {
+  const { repo, runDir } = setup({ engaged: false })
+  guard('observe', { cwd: repo.dir, session_id: SESSION, tool_name: 'mcp__x__y' })
+  guard('observe', { cwd: repo.dir, session_id: 'other-session', tool_name: 'mcp__x__y' })
+  assert.equal(fs.existsSync(path.join(runDir, 'events.jsonl')), false, 'no ledger writes without engagement')
+})

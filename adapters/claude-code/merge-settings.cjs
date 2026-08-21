@@ -11,7 +11,10 @@ settings.hooks.PreToolUse ??= []
 const GUARD_TIMEOUT = 10
 const wanted = [
   { matcher: 'Bash', cmd: `${guardBin} bash` },
-  { matcher: 'Edit|Write|NotebookEdit', cmd: `${guardBin} write` }
+  { matcher: 'Edit|Write|NotebookEdit', cmd: `${guardBin} write` },
+  // Passive usage ledger: records MCP-tool and skill invocations to the active
+  // run's audit log (asset_used events). Never denies; fails open like the rest.
+  { matcher: 'mcp__.*|Skill', cmd: `${guardBin} observe` }
 ]
 for (const { matcher, cmd } of wanted) {
   const present = settings.hooks.PreToolUse.some(entry =>

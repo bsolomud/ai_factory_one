@@ -8,6 +8,10 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [{ "type": "command", "command": "~/.ai_factory_one/bin/guard write" }]
+      },
+      {
+        "matcher": "mcp__.*|Skill",
+        "hooks": [{ "type": "command", "command": "~/.ai_factory_one/bin/guard observe" }]
       }
     ]
   }

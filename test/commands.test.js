@@ -3,8 +3,9 @@ import { readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
+import { hashPath } from '../src/scan.js'
 import { writeState } from '../src/state.js'
-import { CLEAN_REVIEW_COUNTS, STANDARD_PROFILE, cli, completeArtifact, contextSections, installProfile, readState, sandbox, standardRepo } from './helpers.js'
+import { CLEAN_REVIEW_COUNTS, STANDARD_PROFILE, cli, completeArtifact, contextSections, installProfile, readState, sandbox, standardRepo, writeFile } from './helpers.js'
 
 test('validateProfile: catches structural errors, warns on soft gaps', () => {
   assert.deepEqual(validateProfile(null).errors.length > 0, true)
@@ -274,4 +275,52 @@ test('advance BLOCKED: the event records what blocked, not just how much', () =>
   assert.ok(ev.reasons >= 1, 'numeric count kept')
   assert.ok(Array.isArray(ev.reason_texts) && ev.reason_texts.length === ev.reasons, 'reason texts recorded')
   assert.ok(ev.reason_texts.every(t => typeof t === 'string' && t.length > 0 && t.length <= 200))
+})
+
+test('used + assets: consulted assets tallied, untouched inventory flagged unused', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'assets-repo')
+  const slug = 'example.com-test-assets-repo'
+  // Bindings need REAL files + hashes: new-run refuses stale evidence.
+  repo.write('.claude/skills/code-review/SKILL.md', '# repo review skill\n')
+  repo.write('doc/ai/product-map.md', '# curated docs\n')
+  const sha = hashPath(path.join(repo.dir, '.claude/skills/code-review'))
+  const docSha = hashPath(path.join(repo.dir, 'doc/ai'))
+  installProfile(home, slug, STANDARD_PROFILE + `bindings:
+  review: { source: repo, path: .claude/skills/code-review, sha: "${sha}" }
+  knowledge: { source: repo, path: doc/ai, sha: "${docSha}" }
+  plan: { source: builtin }
+`)
+  // Two knowledge facts on disk; only one will be consulted.
+  const kdir = path.join(home, 'repos', slug, 'knowledge')
+  writeFile(kdir, 'cache-limits.md', 'fact\n')
+  writeFile(kdir, 'stale-fact.md', 'fact\n')
+  writeFile(kdir, 'index.md', '- [cache-limits](cache-limits.md)\n- [stale-fact](stale-fact.md)\n')
+
+  const run = a => cli(a, { home, cwd: repo.dir })
+  run(['new-run', 'AS-1'])
+
+  assert.equal(run(['used', 'bogus-kind', 'x']).verdict, 'ERROR', 'unknown kind rejected')
+  assert.equal(run(['used', 'knowledge']).verdict, 'ERROR', 'ref is mandatory')
+  assert.equal(run(['used', 'knowledge', 'cache-limits']).verdict, 'OK')
+  assert.equal(run(['used', 'doc', 'doc/ai/product-map.md']).verdict, 'OK')
+
+  const report = run(['assets'])
+  assert.equal(report.verdict, 'OK')
+  const byRef = Object.fromEntries(report.assets.map(a => [a.ref, a]))
+  assert.equal(byRef['cache-limits'].uses, 1)
+  assert.equal(byRef['cache-limits'].last_used, 'AS-1')
+  assert.equal(byRef['stale-fact'].uses, 0)
+  assert.equal(byRef['.claude/skills/code-review'].uses, 0)
+  assert.ok(report.unused.includes('knowledge: stale-fact'))
+  assert.ok(report.unused.includes('skill: .claude/skills/code-review'))
+  assert.equal(byRef['doc/ai'].kind, 'doc', 'the knowledge binding is curated docs, not a skill')
+  assert.equal(byRef['doc/ai'].uses, 1, 'a file read under a bound docs dir counts for the binding')
+  assert.deepEqual(report.other_usage, {}, 'the doc read matched inventory, nothing left over')
+
+  // A skill cited by basename still matches the bound path.
+  run(['used', 'skill', 'code-review'])
+  const after = run(['assets'])
+  assert.equal(Object.fromEntries(after.assets.map(a => [a.ref, a]))['.claude/skills/code-review'].uses, 1)
+  assert.ok(!after.unused.includes('skill: .claude/skills/code-review'))
 })

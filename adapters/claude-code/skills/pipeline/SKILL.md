@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline pr-feedback triages reviewer comments on the open PR into a gated rework round; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | status | show | repos | metrics | assets | feedback "<note>" | doctor
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -101,6 +101,11 @@ Self-contained run context (you have NO other conversation context):
 - run: <run id> · run_dir: <run_dir>  (artifacts in <run_dir>/artifacts/)
 - knowledge: <knowledge_dir from status>  (the repo's learned-facts store —
   read its index.md when the runbook routes you there; SCRIBE writes to it)
+- USAGE LEDGER: each knowledge fact, repo-bound skill, or curated doc you
+  actually consult gets ONE record: `pipeline used <knowledge|skill|doc> <ref>`
+  (fact name / skill path / doc path). Tool and skill INVOCATIONS are logged
+  automatically — this covers only what you read. Unrecorded reads make a
+  living asset look dead and get it pruned.
 - stage: <STAGE> · runbook: <stage_prompt>  (read it FIRST, follow it)
 - base branch: <base> · task input: <run_dir>/artifacts/00-ticket.md
 - phase/mode: <phase or mode, when applicable>
@@ -333,7 +338,7 @@ Own agent, interactive via two phases:
 NEVER approve otherwise — not to unblock yourself, not because it "looks
 trivial", never bundled with another command. Every approval is audited.
 
-## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics`
+## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics` · `/pipeline assets`
 
 Run the matching CLI command and present for humans:
 - **status / show** — run(s), stage, substate (subtask i of N), unverified
@@ -344,6 +349,10 @@ Run the matching CLI command and present for humans:
   run; first-pass-green rate, gate-edit rate, blocked histogram, critic
   rounds, agents spawned, feedback notes). Present the headline rates and say
   what they imply.
+- **assets** — per-repo usage report: which knowledge facts, bound skills and
+  docs the runs actually consulted (plus MCP-tool call counts), and which were
+  never touched. Present the unused list as candidates to improve or remove —
+  the developer decides; nothing is deleted automatically.
 - **doctor** — validates the repo profile; relay errors/warnings plainly.
 
 ## `/pipeline feedback "<note>"`

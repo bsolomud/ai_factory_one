@@ -113,6 +113,9 @@ export function runMetrics(runDir, runId, config = null) {
     rework_cycles: reopens,
     stage_reentries: sum(Object.values(stages).map(s => Math.max(0, s.entries - 1))),
     feedback_notes: events.filter(e => e.event === 'feedback').length,
+    // Which repo assets (knowledge facts, bound skills, docs) and MCP tools the
+    // run's agents actually leaned on — cross-run rollup lives in `assets`.
+    assets_used: tally(events.filter(e => e.event === 'asset_used').map(e => `${e.kind}: ${e.ref}`)),
     seconds_by_stage: Object.fromEntries(Object.entries(stages).filter(([, s]) => s.ms).map(([k, s]) => [k, Math.round(s.ms / 1000)])),
     ...(acCoverage(runDir, config) ?? {}),
     ...(reviewFindings(runDir, config) ?? {})

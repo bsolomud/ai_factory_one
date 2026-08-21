@@ -13,7 +13,8 @@ and the artifacts from disk; only findings summaries travel between them.
 ## Inputs
 1. `artifacts/01-context.md` (approved — requirements, acceptance criteria,
    the developer's answers).
-2. The knowledge layer (same routing as CONTEXT; cite what you consult).
+2. The knowledge layer (same routing as CONTEXT; cite what you consult, and
+   record each consulted item: `pipeline used knowledge <fact>` / `used doc <path>`).
 3. The existing code to change and similar merged changes in history.
 
 ## Output

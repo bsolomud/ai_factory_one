@@ -235,3 +235,43 @@ test('ignore-untracked re-baselines an in-flight run to the current untracked se
   assert.deepEqual(readState(runDir).git.baseline_untracked, ['local-notes.md'],
     'the escape hatch persists the current untracked set as ambient')
 })
+
+test('declare-na: validates the slot, records the event, --clear undoes it', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'na-repo')
+  installProfile(home, 'example.com-test-na-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  run(['new-run', 'NA-1'])
+  const runDir = path.join(home, 'repos', 'example.com-test-na-repo', 'runs', 'NA-1')
+
+  assert.equal(run(['declare-na', 'bogus_slot', '--reason', 'x']).verdict, 'ERROR', 'unknown slot rejected')
+  assert.equal(run(['declare-na', 'lint_changed']).verdict, 'ERROR', 'a reason is mandatory')
+
+  const ok = run(['declare-na', 'lint_changed', '--reason', 'lockfile-only dependency bump'])
+  assert.equal(ok.verdict, 'OK')
+  assert.equal(ok.slots_na.lint_changed, 'lockfile-only dependency bump')
+  assert.equal(readState(runDir).slots_na.lint_changed, 'lockfile-only dependency bump')
+  assert.match(readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), /slot_declared_na/)
+
+  const cleared = run(['declare-na', 'lint_changed', '--clear'])
+  assert.equal(cleared.verdict, 'OK')
+  assert.equal(readState(runDir).slots_na.lint_changed, undefined)
+  assert.match(readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), /slot_na_cleared/)
+})
+
+test('advance BLOCKED: the event records what blocked, not just how much', () => {
+  const { root, home } = sandbox()
+  const repo = standardRepo(root, 'bl-repo')
+  installProfile(home, 'example.com-test-bl-repo', STANDARD_PROFILE)
+  const run = a => cli(a, { home, cwd: repo.dir })
+  run(['new-run', 'BL-1'])
+  const blocked = run(['advance'])   // CONTEXT artifact is still a draft template
+  assert.equal(blocked.verdict, 'BLOCKED')
+
+  const runDir = path.join(home, 'repos', 'example.com-test-bl-repo', 'runs', 'BL-1')
+  const events = readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l))
+  const ev = events.findLast(e => e.event === 'blocked')
+  assert.ok(ev.reasons >= 1, 'numeric count kept')
+  assert.ok(Array.isArray(ev.reason_texts) && ev.reason_texts.length === ev.reasons, 'reason texts recorded')
+  assert.ok(ev.reason_texts.every(t => typeof t === 'string' && t.length > 0 && t.length <= 200))
+})

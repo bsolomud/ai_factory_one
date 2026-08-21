@@ -66,9 +66,12 @@ export function acAccounting(ids, mapText, deferredText) {
 }
 
 // A token cleaned to a path: trailing :123 / :123-456 line refs stripped; only
-// path-like tokens (contain '/' or carry an extension) qualify.
+// path-like tokens (contain '/' or carry an extension) qualify. A token with
+// whitespace or shell/glob characters is a command or pattern, never a path —
+// backticked commands in plan prose false-blocked real runs (FP-2).
 const cleanPath = token => {
   const cleaned = token.replace(/:\d+(-\d+)?$/, '').trim()
+  if (/[\s*{}$]/.test(cleaned)) return null
   return cleaned.includes('/') || /\.\w+$/.test(cleaned) ? cleaned : null
 }
 
@@ -79,12 +82,19 @@ export function backtickPaths(line) {
   return [...line.matchAll(/`([^`]+)`/g)].map(m => cleanPath(m[1])).filter(Boolean)
 }
 
+// Path claims live on table rows and list items — the shapes the plan template
+// mandates for machine-parsed sections. A prose sentence mentioning `GEM/specs`
+// or a backticked command is explanation, not a claim; extracting from it
+// false-blocked 17/18 pilot runs at PLAN (FP-2).
+const carriesPathClaims = line => /^\s*(\||[-*]\s|\d+[.)]\s)/.test(line)
+
 // Paths mentioned in a section: backticked tokens and bare path-like words.
 // A line annotated "(new)" lists a file the plan will CREATE — exempt from
 // existence checks. Trailing :123 line references are stripped.
 export function pathsInSection(text) {
   const paths = []
   for (const line of text.split('\n')) {
+    if (!carriesPathClaims(line)) continue
     const isNew = /\(new\)/i.test(line)
     const tokens = [...line.matchAll(/`([^`]+)`/g)].map(m => m[1])
     if (tokens.length === 0) {

@@ -85,3 +85,27 @@ bindings:
   const rehash = cli(['hash', '.claude/skills/code-review'], { home, cwd: repo.dir })
   assert.match(rehash.hashes['.claude/skills/code-review'], /^sha256:/)
 })
+
+test('stale evidence mid-run: status carries a note, the run continues; a NEW run is blocked', () => {
+  const { root, home } = sandbox()
+  const repo = repoWithAssets(root)
+  const sha = hashPath(path.join(repo.dir, '.claude/skills/code-review'))
+  installProfile(home, 'example.com-test-onb-repo', `
+commands: {}
+no_touch: []
+bindings:
+  review: { source: repo, path: .claude/skills/code-review, sha: "${sha}" }
+`)
+  const created = cli(['new-run', 'ST-1'], { home, cwd: repo.dir })
+  assert.equal(created.verdict, 'CREATED', 'fresh evidence → the run starts')
+
+  repo.write('.claude/skills/code-review/SKILL.md', '# repo review skill\nrules CHANGED\n')
+  const status = cli(['status'], { home, cwd: repo.dir })
+  assert.equal(status.verdict, 'ACTIVE_RUN', 'staleness never walls work in flight')
+  assert.match(status.stale_note, /profile evidence changed/)
+  assert.match(status.stale_note, /binding:review/)
+
+  const blocked = cli(['new-run', 'ST-2'], { home, cwd: repo.dir })
+  assert.equal(blocked.verdict, 'PROFILE_STALE', 'a new run must not start on stale evidence')
+  assert.equal(blocked.code, 1)
+})

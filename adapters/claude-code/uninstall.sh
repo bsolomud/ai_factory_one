@@ -13,11 +13,16 @@ PURGE=0
 echo "pipeline home: $PIPELINE_HOME"
 echo "claude dir:    $CLAUDE_DIR"
 
-# 1. Remove the skill symlink (only if it is a symlink we created).
-if [ -L "$CLAUDE_DIR/skills/pipeline" ]; then
-  rm -f "$CLAUDE_DIR/skills/pipeline"
-  echo "removed skill: skills/pipeline"
-fi
+# 1. Remove our skill symlinks (only entries that are symlinks into this
+#    package's adapters/claude-code/skills — leaves user skills untouched).
+HERE_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for name in "$HERE_EARLY"/skills/*/; do
+  link="$CLAUDE_DIR/skills/$(basename "$name")"
+  if [ -L "$link" ]; then
+    rm -f "$link"
+    echo "removed skill: skills/$(basename "$name")"
+  fi
+done
 
 # 2. Remove agent symlinks — only pipeline-*.md entries that are symlinks
 #    (leaves any real files the user authored untouched).

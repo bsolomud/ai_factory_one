@@ -47,7 +47,6 @@ stages:
       - profile_command: post_change_hooks
       - git_clean_within
       - no_secrets
-      - min_commits_per_subtask
     gate: { required: true }
     next: TEST
 

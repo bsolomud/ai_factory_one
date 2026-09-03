@@ -71,7 +71,8 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   assert.equal(advance().verdict, 'GATE')
   assert.equal(approve().stage, 'IMPLEMENT')
 
-  // --- IMPLEMENT subtask 1: lint failure → boundary violation → missing commit → green
+  // --- IMPLEMENT subtask 1: lint failure → boundary violation → green
+  // (uncommitted — commits are optional, the gate must pass without one)
   repo.git('checkout', '-qb', 'T-1')
   repo.write('src/app.sh', 'echo LINTFAIL\n')
   blocked = advance()
@@ -82,10 +83,6 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   blocked = advance()
   assert.match(blocked.reasons.join(' '), /rogue\.txt.*outside the approved plan/, 'write boundary enforced')
   fs.rmSync(path.join(repo.dir, 'rogue.txt'))
-
-  blocked = advance()
-  assert.match(blocked.reasons.join(' '), /commit your work/, 'uncommitted subtask blocks')
-  repo.git('add', '-A'); repo.git('commit', '-qm', 'T-1 subtask 1: app greeting')
 
   gate = advance()
   assert.equal(gate.verdict, 'GATE')

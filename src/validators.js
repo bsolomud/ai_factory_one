@@ -325,22 +325,6 @@ export const validators = {
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
-  min_commits_per_subtask(ctx) {
-    const subtask = ctx.state?.substate?.subtask
-    if (!subtask) return skip(`no subtask cursor set — commit check skipped, recorded as UNVERIFIED`, 'no_target')
-    const base = ctx.state?.git?.base || 'master'
-    let count = 0
-    try {
-      count = parseInt(execFileSync('git', ['rev-list', '--count', `${base}..HEAD`], { cwd: ctx.repoDir, encoding: 'utf8' }).trim(), 10)
-    } catch {
-      return fail(`could not count commits on ${base}..HEAD — is the branch created and based on ${base}?`)
-    }
-    if (count < subtask) {
-      return fail(`subtask ${subtask} requires at least ${subtask} commit(s) on the branch (one commit per subtask — recovery depends on it); found ${count} — commit your work with a message referencing the subtask`)
-    }
-    return ok()
-  },
-
   substate_set(ctx, keys) {
     const reasons = []
     for (const key of keys) {

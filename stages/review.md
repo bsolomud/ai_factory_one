@@ -20,13 +20,17 @@ Disputed, Plan-vs-shipped check.
   style-consistency-with-surrounding-code. Verification-before-flagging: a
   finding without checked evidence is noise — drop it.
 - **Confirmed findings** → the dispatcher hands them to the implementer (fix
-  mode: stay inside the plan boundary; amend the plan if a fix requires it,
-  commit), then a fresh reviewer verifies and records them under
+  mode: stay inside the plan boundary; amend the plan if a fix requires it;
+  commit only if the run is using commits), then a fresh reviewer verifies and
+  records them under
   `## Fixes applied`. Max 2 reviewer rounds, then escalate leftovers.
 - **Disputed findings** → record both sides under `## Disputed`; the developer
   arbitrates at the gate.
 - **Plan-vs-shipped check**: does the final shape still match the approved
   plan + amendments? Each drift becomes an amendment or an explicit decision.
+  Also verify each plan Risk row's PREDICTED FAILURE MODE against the shipped
+  code — a risk whose prediction no longer holds (the real failure mode is
+  different or bigger) is a blocking finding on the plan, not a footnote.
 - **Re-review (reopen / round 2+)**: before writing this round, move the prior
   round's content into `## History` wrapped in a collapsed `<details>` block
   (append-only — never rewrite or delete an archived round), then refresh the
@@ -38,6 +42,6 @@ Fill the BLUF header at the top (Outcome APPROVE/CHANGES, Blocking count, TL;DR,
 Needs you) reflecting the latest round, and set the frontmatter counts —
 `findings: { blocking, advisory, fixed, disputed }` — to match `## Findings`
 (machine-read: the gate blocks while `blocking > 0`; metrics track review
-effectiveness from these). Artifact complete, fixes committed,
+effectiveness from these). Artifact complete, fixes applied,
 checks green via `pipeline advance`;
 present findings summary and STOP.

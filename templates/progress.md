@@ -18,7 +18,7 @@ status: draft
 
 ## Subtasks
 <!-- One entry per plan subtask: `- [ ] N. <title>` — checked when its gate is
-approved. Under each: what was done, one commit reference. -->
+approved. Under each: what was done (+ a commit reference, if committed). -->
 
 ## Deviations
 <!-- A table, one row per deviation. Columns: What | Why | Kind.

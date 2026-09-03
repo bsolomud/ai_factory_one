@@ -102,7 +102,7 @@ test('crash between artifact completion and advance → "ready to advance" note'
   assert.match(notes.join(' '), /stamped complete.*pipeline advance/)
 })
 
-test('IMPLEMENT: git wins — committed subtask vs interrupted subtask reported', () => {
+test('IMPLEMENT: reports the git facts without inferring subtask progress from commits', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'rec-repo')
   repo.git('checkout', '-qb', 'T-1')
@@ -112,8 +112,9 @@ test('IMPLEMENT: git wins — committed subtask vs interrupted subtask reported'
   state.substate.of = 2
   writeState(runDir, state)
 
+  // Clean tree, no commits: commits are optional, so nothing to report.
   let result = reconcile({ runDir, repoDir: repo.dir, config, runId: 'T-1', repoSlug: 'r' })
-  assert.match(result.notes.join(' '), /interrupted mid-work/)
+  assert.ok(!/interrupted|committed/.test(result.notes.join(' ')))
 
   repo.write('src/app.sh', 'echo v2\n')
   result = reconcile({ runDir, repoDir: repo.dir, config, runId: 'T-1', repoSlug: 'r' })
@@ -121,7 +122,7 @@ test('IMPLEMENT: git wins — committed subtask vs interrupted subtask reported'
 
   repo.git('add', '-A'); repo.git('commit', '-qm', 'subtask 1')
   result = reconcile({ runDir, repoDir: repo.dir, config, runId: 'T-1', repoSlug: 'r' })
-  assert.match(result.notes.join(' '), /appears committed.*pipeline advance/)
+  assert.match(result.notes.join(' '), /1 commit\(s\) on the branch/)
 })
 
 test('rebuild: N/A slot declarations replayed from events, a later clear wins', () => {

@@ -34,22 +34,20 @@ export function reconcile({ runDir, repoDir, config, runId, repoSlug }) {
     notes.push(`the ${state.stage} output artifact is stamped complete — the stage looks finished; run 'pipeline advance'`)
   }
 
-  // IMPLEMENT reconciliation: git wins over the cursor.
+  // IMPLEMENT reconciliation: describe what git shows. Commits are optional
+  // (the developer may keep the whole run uncommitted and commit themselves),
+  // so commit count says nothing about subtask progress — only report it.
   if (def?.per_subtask && state.substate.subtask != null && repoDir) {
     const base = state.git?.base || 'master'
     let commits = null
     try {
       commits = parseInt(execFileSync('git', ['rev-list', '--count', `${base}..HEAD`], { cwd: repoDir, encoding: 'utf8' }).trim(), 10)
     } catch { /* branch missing — the stage prompt will surface it */ }
-    if (commits !== null) {
-      if (commits >= state.substate.subtask) {
-        notes.push(`git shows ${commits} commit(s) — subtask ${state.substate.subtask} appears committed; run 'pipeline advance' to verify and gate it`)
-      } else {
-        notes.push(`git shows ${commits} commit(s), below the subtask cursor (${state.substate.subtask}) — subtask ${state.substate.subtask} was interrupted mid-work`)
-      }
-      if (dirtyTree(repoDir)) {
-        notes.push(`the working tree has uncommitted changes — review them against subtask ${state.substate.subtask} before continuing`)
-      }
+    if (commits !== null && commits > 0) {
+      notes.push(`git shows ${commits} commit(s) on the branch since ${base}`)
+    }
+    if (commits !== null && dirtyTree(repoDir)) {
+      notes.push(`the working tree has uncommitted changes — review them against subtask ${state.substate.subtask} before continuing`)
     }
   }
 

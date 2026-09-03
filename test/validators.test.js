@@ -310,19 +310,6 @@ test('subtask_coupling: subtasks without declared Files block with the table ins
   assert.match(result.reasons[0], /subtask 1 lists no Files/)
 })
 
-test('min_commits_per_subtask: counts branch commits against the cursor', () => {
-  const { root } = sandbox()
-  const repo = standardRepo(root, 'v-repo5')
-  repo.git('checkout', '-qb', 'T-1')
-  const state = newState({ runId: 'T-1', repo: 'r', stage: 'IMPLEMENT' })
-  state.substate.subtask = 1
-  const ctx = ctxFor({ root, repoDir: repo.dir, state })
-  assert.match(validators.min_commits_per_subtask(ctx).reasons[0], /found 0 — commit/)
-  repo.write('src/app.sh', 'echo v2\n')
-  repo.git('add', '-A'); repo.git('commit', '-qm', 'subtask 1')
-  assert.equal(validators.min_commits_per_subtask(ctx).ok, true)
-})
-
 test('substate_set: unset key names the exact command to run', () => {
   const { root } = sandbox()
   const result = validators.substate_set(ctxFor({ root }), ['subtask', 'of'])

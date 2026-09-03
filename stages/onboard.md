@@ -43,7 +43,10 @@ actually proven — liveness is not the same guarantee as a real run.
 ### 2. Skill binding — the core question
 For each pipeline capability that has built-in behavior — **plan, review,
 test, ci, knowledge** — check `candidates` for a repo-local equivalent
-(e.g. a repo review skill vs the pipeline's built-in reviewer). Present a
+(e.g. a repo review skill vs the pipeline's built-in reviewer). The built-in
+behind each capability: plan/test → the stage runbook's own procedure;
+review → the review runbook's built-in passes; **ci → the `ci-triage`
+skill**; knowledge → the pipeline's learned-facts store. Present a
 table: capability | repo asset found | built-in equivalent. Then ask the
 developer to choose ONE binding mode:
 
@@ -81,6 +84,25 @@ Show the developer the full profile and wait for explicit confirmation —
 wrong bindings get fixed once here instead of poisoning every later stage.
 Then re-run `pipeline status` to prove the profile loads (and registers the
 repo for any-folder use).
+
+## Re-sync flow (PROFILE_STALE)
+
+A hash mismatch on bound assets or evidence files means something changed on
+disk since the profile was confirmed — NOT that the choices are wrong. The
+re-sync is proportional, never a full re-onboard:
+
+1. Identify exactly which hashes moved (the CLI's stale report names them).
+2. Re-hash only those paths (`pipeline hash <paths> --repo <slug>`) and look
+   at what actually changed in each.
+3. Re-verify only the commands whose evidence changed, at their recorded
+   `verified:` tier (config-parse for linters, liveness for runners) — never
+   re-verify untouched commands.
+4. Update the moved hashes in the profile and append ONE dated line to the
+   profile's re-sync notes: `re-synced <date>: <paths>; choices unchanged`
+   (or what changed).
+5. Change a binding or command CHOICE only if the developer asks — a re-sync
+   that silently alters choices is a bug. If the change looks like it should
+   alter a choice (e.g. a bound skill was deleted), ask.
 
 ## Done when
 The developer confirmed the profile and `pipeline status` answers

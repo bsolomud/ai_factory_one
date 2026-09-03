@@ -33,9 +33,11 @@ else
 fi
 chmod +x "$PIPELINE_HOME/bin/pipeline" "$PIPELINE_HOME/bin/guard"
 
-# 3. Claude Code adapter: skill + ALL agents (symlinks, so package updates flow).
+# 3. Claude Code adapter: ALL skills + ALL agents (symlinks, so package updates flow).
 mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agents"
-ln -sfn "$PACKAGE_ROOT/adapters/claude-code/skills/pipeline" "$CLAUDE_DIR/skills/pipeline"
+for skill in "$PACKAGE_ROOT"/adapters/claude-code/skills/*/; do
+  ln -sfn "${skill%/}" "$CLAUDE_DIR/skills/$(basename "$skill")"
+done
 for agent in "$PACKAGE_ROOT"/adapters/claude-code/agents/*.md; do
   ln -sf "$agent" "$CLAUDE_DIR/agents/$(basename "$agent")"
 done

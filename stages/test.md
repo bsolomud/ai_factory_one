@@ -18,8 +18,14 @@ Risk-to-test map, Added tests, Deferred.
   (every plan risk AND every acceptance criterion → a named test or `not tested
   because <reason>`); reference criteria by id as `AC#<n>` — `advance`
   machine-checks that every AC#<n> from the context appears in the map or
-  under `## Deferred`. Write the justified missing tests in the repo's own
-  style; screen them for flakiness; only green work is presented.
+  under `## Deferred`. A plan risk row is a CLAIM about a failure mode: for
+  degradation-class risks, the mapped test must reproduce the predicted
+  failure, not just exercise the code path. Write the justified missing tests
+  in the repo's own style; screen them for flakiness; only green work is
+  presented.
+- If a profile check blocks for reasons you cannot map to the branch diff,
+  follow the pipeline's **gate-triage** skill
+  (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.
 - Write the results into `04-test-report.md`; deferred edge cases go under
   `## Deferred` — the developer sees them at the gate; recorded, not dropped.
 

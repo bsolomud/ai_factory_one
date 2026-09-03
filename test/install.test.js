@@ -36,7 +36,9 @@ test('install.sh: sandbox layout, hook merge, idempotence', () => {
   for (const rel of ['pipeline.yml', 'stages/context.md', 'templates/plan.md', 'bin/pipeline', 'bin/guard', 'VERSION']) {
     assert.ok(fs.existsSync(path.join(home, rel)), `missing ${rel} in pipeline home`)
   }
-  assert.ok(fs.existsSync(path.join(claude, 'skills/pipeline/SKILL.md')), 'skill linked')
+  for (const name of ['pipeline', 'gate-triage', 'ci-triage', 'knowledge-harvest']) {
+    assert.ok(fs.existsSync(path.join(claude, `skills/${name}/SKILL.md`)), `${name} skill linked`)
+  }
   for (const agent of ['onboarder', 'context', 'planner', 'architect', 'critic', 'implementer', 'qa', 'reviewer', 'stage-runner']) {
     assert.ok(fs.existsSync(path.join(claude, `agents/pipeline-${agent}.md`)), `${agent} agent linked`)
   }
@@ -163,7 +165,9 @@ test('uninstall.sh: reverses install, keeps user work by default, purges on --pu
   // --- default uninstall: framework gone, work + unrelated settings kept ---
   uninstall(env)
 
-  assert.ok(!fs.existsSync(path.join(claude, 'skills/pipeline')), 'skill symlink removed')
+  for (const name of ['pipeline', 'gate-triage', 'ci-triage', 'knowledge-harvest']) {
+    assert.ok(!fs.existsSync(path.join(claude, `skills/${name}`)), `${name} skill symlink removed`)
+  }
   for (const agent of ['onboarder', 'planner', 'stage-runner', 'reviewer']) {
     assert.ok(!fs.existsSync(path.join(claude, `agents/pipeline-${agent}.md`)), `${agent} agent removed`)
   }

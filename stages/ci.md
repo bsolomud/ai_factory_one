@@ -7,13 +7,22 @@ advances only when CI is green and the human has merged.
 1. Failed run logs: via the CI provider recorded in the profile, or ask the
    developer to paste the logs (the universal fallback).
 2. The branch diff and `artifacts/02-plan.md`.
-3. Repo debugging playbooks via bindings, when present.
+3. The profile's `ci` binding: **if a repo CI/debugging skill is bound, use
+   it as-is** — it is the single source of truth; record it:
+   `pipeline used skill <its path>` (feeds the assets report). Otherwise use
+   the pipeline's built-in **ci-triage** skill
+   (`~/.claude/skills/ci-triage/SKILL.md`) as the evidence layer under the
+   discipline below.
 
 ## Output
 `artifacts/07-ci-analysis.md` — APPEND one entry per analyzed run. Required
 sections: Runs analyzed, Classification, Fixes, Outcome.
 
 ## Procedure — hard discipline, repo-independent
+- **Pre-flight before classification**: run the bound triage procedure's
+  mergeability and expected-vs-ran checks FIRST — green checks on a
+  conflicted PR are a false green (the workflows were silently skipped, not
+  passed), and a missing workflow must be explained before any log is read.
 - Classify each failure with evidence: **deterministic** (maps to the diff →
   propose a fix) / **suspected flake or order dependence** (reproduce FIRST;
   use repo tooling when documented) / **lint** (targeted fix) /

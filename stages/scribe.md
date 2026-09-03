@@ -15,7 +15,10 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
   missing knowledge facts.
 - **Learnings** (as a table: Learning | Type | Routed to | Status): harvest
   gotchas — developer corrections at gates, recurring critic findings, CI
-  failure patterns, UNVERIFIED checks that mattered.
+  failure patterns, UNVERIFIED checks that mattered. A prior
+  `knowledge-harvest` pass may have pre-drafted rows and facts (stamped
+  `Drafted by knowledge-harvest`) — verify each drafted row against this
+  run's events, then route it; update existing facts rather than duplicating.
 - **Asset audit**: run `pipeline assets`. A knowledge fact or bound skill with
   zero uses across runs is a pruning candidate (stale? unfindable index hook?
   genuinely dead?) — and an asset that was consulted but proved wrong or thin

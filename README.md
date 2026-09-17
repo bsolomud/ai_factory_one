@@ -9,6 +9,26 @@ work; a small deterministic CLI certifies stage transitions. `advance` re-runs
 the stage's validators and refuses to move the state machine unless they exit 0.
 The model can claim anything; the FSM only believes exit codes.
 
+**Second principle — the artifact's own claims must be falsifiable.** A pipeline
+artifact is a pile of claims; a reviewer arrives with evidence, and the PR review
+round is where the two finally meet. So the round count tracks the number of
+unproven claims, which code quality does not bound. Measured on two pilot PRs:
+23 reviewer findings, of which **12 were on code written to fix the other 11**,
+and the blockers were never "this line is wrong" but "this is coupled to
+something outside your diff". Three gates close that gap:
+
+| Gate | Stage | What it makes falsifiable |
+|------|-------|---------------------------|
+| `evidence_verified` | PLAN, REVIEW | The plan's `## Coupling` table — who else writes/reads what you changed. Each row records a read-only search and the count it printed; **`advance` re-runs the command and compares**. A claim that cannot survive its own command is not evidence, and a count that drifted means the ground moved under the claim. |
+| `ac_proofs` | TEST | Each acceptance criterion's test was **watched to go red** without the fix (`{ ac, test, mutation }`). `pipeline proof-stamp` hashes the code under test, so the ledger **expires** when that code changes — which is what stops a fix round from inheriting a proof its own change invalidated. |
+| `ac_population` | CONTEXT | Every criterion names the population it is about (`new` / `existing` / `both` / `n-a`) — the question that separates a shipped fix from a fix to the writer only. |
+
+REVIEW also runs **blind first**: pass A sees the diff and the repo but not the
+plan, because handing a reviewer the implementer's rationale hands it the
+implementer's blind spots. The plan is opened only for pass B's plan-vs-shipped
+check. The `change-probes` skill turns a diff into the searches that fill
+`## Coupling`.
+
 Design docs: [`MVP-PLAN.md`](MVP-PLAN.md) (this MVP's scope + verification criteria).
 
 ## Layout

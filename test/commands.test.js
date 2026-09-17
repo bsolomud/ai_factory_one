@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
 import { hashPath } from '../src/scan.js'
 import { writeState } from '../src/state.js'
-import { CLEAN_REVIEW_COUNTS, STANDARD_PROFILE, cli, completeArtifact, contextSections, installProfile, readState, sandbox, standardRepo, writeFile } from './helpers.js'
+import { CLEAN_REVIEW_COUNTS, COUPLING_OK, STANDARD_PROFILE, cli, completeArtifact, contextSections, proofsFrontmatter, installProfile, readState, sandbox, standardRepo, writeFile } from './helpers.js'
 
 test('validateProfile: catches structural errors, warns on soft gaps', () => {
   assert.deepEqual(validateProfile(null).errors.length > 0, true)
@@ -170,15 +170,15 @@ test('reopen: backward-only, drops later gates, resets downstream artifacts to d
   run(['new-run', 'RE-1'])
   ac('artifacts/01-context.md', 'CONTEXT', contextSections())
   run(['advance']); run(['approve'])
-  ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Risks: 'r', Subtasks: '1. only — `src/app.sh`', 'Testing strategy': 't', 'Open questions': 'None.' })
+  ac('artifacts/02-plan.md', 'PLAN', { Approach: 'a', 'Affected files': '- `src/app.sh`', Coupling: COUPLING_OK, Risks: 'r', Subtasks: '1. only — `src/app.sh`', 'Testing strategy': 't', 'Open questions': 'None.' })
   run(['advance']); run(['approve'])
   ac('artifacts/03-progress.md', 'BREAKDOWN', { Subtasks: '- [ ] 1. only', Deviations: 'None.' })
   run(['set-substate', 'subtask=1', 'of=1']); run(['advance']); run(['approve'])
   repo.git('checkout', '-qb', 'RE-1'); repo.write('src/app.sh', 'echo v2\n'); repo.git('add', '-A'); repo.git('commit', '-qm', 's1')
   run(['advance']); assert.equal(run(['approve']).stage, 'TEST')
-  ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' })
+  ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' }, proofsFrontmatter(run(['proof-stamp']).proof_stamp))
   run(['advance']); assert.equal(run(['approve']).stage, 'REVIEW')
-  ac('artifacts/05-review.md', 'REVIEW', { Findings: 'None.', 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, CLEAN_REVIEW_COUNTS)
+  ac('artifacts/05-review.md', 'REVIEW', { 'Blind pass': 'Reads as a greeting change.', Findings: 'None.', Coupling: COUPLING_OK, 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, CLEAN_REVIEW_COUNTS)
   run(['advance']); assert.equal(run(['approve']).stage, 'PR')
 
   // At PR, a late one-line change is needed → reopen IMPLEMENT.

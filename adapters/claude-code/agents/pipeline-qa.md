@@ -18,6 +18,12 @@ and the repo's test conventions.
 - Screen everything you write for flakiness: time/date dependence, async
   waits, shared state, order dependence. Follow repo playbooks when bound.
 - Run the targeted tests; only green tests may be presented.
+- **Prove each criterion, then stamp** (`ac_proofs` gates on it): break the fix,
+  watch the mapped test go RED, restore, watch it go GREEN, and record
+  `{ ac, test, mutation }` in the report's `proofs:` frontmatter. Green alone
+  never showed that a test would notice the bug returning. Then run
+  `pipeline proof-stamp` and paste the value into `proof_stamp:` — it expires
+  the ledger when the code under test changes.
 - A red check you cannot map to the branch diff means the **gate-triage**
   skill (invoke via the Skill tool; if unavailable, Read
   `~/.claude/skills/gate-triage/SKILL.md` and record

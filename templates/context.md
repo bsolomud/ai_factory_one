@@ -20,12 +20,27 @@ status: draft
 pasted text — see 00-ticket.md). Note what the task does NOT say. -->
 
 ## Acceptance criteria
-<!-- A table, one row per criterion. Columns: # | Criterion | Verified by.
+<!-- A table, one row per criterion. Columns: # | Criterion | Verified by | Population.
      Numbered so the plan and QA can reference "AC#N"; each independently
      checkable. Built from the developer's answers — agreed at the CONTEXT gate.
-     | # | Criterion | Verified by |
-     |---|-----------|-------------|
-     | 1 | what must be true | test / check that proves it | -->
+
+     Write each criterion as an OBSERVABLE END STATE, not as a mechanism. The
+     difference is the whole ballgame: "the form saves the mode" is a claim about
+     code and it passes while every existing record stays broken; "a school stored
+     as bulk runs delta on its next scheduled sync" is a claim about the world and
+     it fails until the data is migrated too.
+
+     Population is machine-checked (ac_population) and takes one of:
+       new      — only records created after this ships
+       existing — rows already out there (⇒ ask: what migrates them?)
+       both     — the usual answer for a bug fix, and the one people skip
+       n-a      — no persisted population (pure UI copy, build config, …)
+     A criterion whose population is 'new' when it should be 'both' is the single
+     most expensive mistake this table can carry.
+
+     | # | Criterion | Verified by | Population |
+     |---|-----------|-------------|------------|
+     | 1 | what must be true, as an observable end state | test / check that proves it | both | -->
 
 ## Decisions
 <!-- The checklist of calls only the developer can make — resolved HERE, where

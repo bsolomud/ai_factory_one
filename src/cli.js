@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { hashPath, scanAssets } from './scan.js'
-import { loadPipeline } from './config.js'
+import { hashPath, proofStamp, scanAssets } from './scan.js'
+import { artifactFor, loadPipeline } from './config.js'
 import { currentBranch, loadProfile, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
-import { parseArtifact } from './artifacts.js'
+import { parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
 import { appendEvent, newState, readEvents, readState, writeState } from './state.js'
 import { runValidators } from './validators.js'
@@ -67,6 +67,28 @@ const commands = {
     const hashes = {}
     for (const rel of positional) hashes[rel] = hashPath(path.join(ctx.repoDir, rel))
     return emit({ verdict: 'OK', hashes })
+  },
+
+  // Stamps the proof ledger against the code it was proved on. Run it right
+  // after the last mutation proof; the TEST gate recomputes the digest and
+  // refuses a ledger that no longer describes the code being shipped.
+  'proof-stamp'(_, flags) {
+    const { ctx, config, runDir } = loadRun(flags)
+    const planRel = artifactFor(config, '-plan.md')
+    const plan = planRel && parseArtifact(path.join(runDir, planRel))
+    if (!plan) {
+      return emit({ verdict: 'ERROR', error: `no plan artifact yet — the stamp covers the plan's '## Affected files', so PLAN must be complete first` }, 1)
+    }
+    const affected = pathsInSection(sections(plan.body)['Affected files'] ?? '').map(p => p.path)
+    if (affected.length === 0) {
+      return emit({ verdict: 'ERROR', error: `the plan's '## Affected files' lists no paths — nothing to stamp` }, 1)
+    }
+    return emit({
+      verdict: 'OK',
+      proof_stamp: proofStamp(ctx.repoDir, affected),
+      covers: affected,
+      next_action: `paste this as 'proof_stamp: <value>' in the test report's frontmatter, immediately after recording the proofs it covers — it expires the moment any of these files changes, which is the point`
+    })
   },
 
   repos() {

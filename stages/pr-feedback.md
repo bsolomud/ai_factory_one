@@ -30,6 +30,28 @@ template in `templates/`. Required sections: Comments, Replies, Outcome.
   - **disputed** — you believe the reviewer is mistaken: draft the
     counter-argument with evidence; the developer arbitrates.
 - Fill `## Comments` as a table, one row per thread, with the proposed action.
+
+## Rework rigor — the rule this procedure exists to enforce
+Measured on two pilot PRs: 23 reviewer findings, **12 of them on code written to
+fix the other 11**. The first round would have been the last if the fixes had
+not carried new defects. A fix is a change like any other, and it is produced
+under worse conditions than the original code: no plan, no coupling analysis, no
+blind review, and a review comment standing in as a spec that is narrower than
+the truth. Treat an accepted comment as a small change that earns the same
+machinery, not as an edit:
+- **Never batch nits with blockers.** In a pilot PR a round-1 nit ("name the
+  record via its global id") was fixed alongside the blockers, and its fix was
+  the round-2 correctness bug. Nits ride through on the blockers' attention.
+- **Each accepted `code-change` gets a `## Coupling` row** in the review
+  artifact before it is implemented — who else writes/reads what this touches.
+  A one-line fix has a blast radius; that is precisely how it stays unmeasured.
+- **Re-prove, never re-stamp.** A fix inside the plan's `## Affected files`
+  expires the proof ledger, and `ac_proofs` will block until the proofs are
+  re-run. That gate is the whole defense against a later fix silently making an
+  earlier round's test non-load-bearing — which is a thing that happened.
+- **Reopen to PLAN, not IMPLEMENT, when the fix changes a decision.** A
+  `design-change` that re-enters at IMPLEMENT skips the critic and the coupling
+  ledger, which are the two stages that would have caught it.
 - Draft replies (verbatim, ready to post) for answer-only and disputed rows.
 - On a later round: archive the prior round's Comments / Replies / Outcome
   into `## History` under a collapsed `<details>` block; keep the sections

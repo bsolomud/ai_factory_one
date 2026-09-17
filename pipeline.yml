@@ -10,6 +10,7 @@ stages:
     validate:
       - artifact_complete: artifacts/01-context.md
       - sections: [Requirements, Acceptance criteria, Decisions, Findings, Open questions]
+      - ac_population   # every criterion names the population it is about — the question that separates a shipped fix from a fix to the writer only
     gate: { required: true }
     next: PLAN
 
@@ -20,8 +21,9 @@ stages:
     critic: { agent: pipeline-critic, prompt: stages/plan-critic.md, max_rounds: 2 }
     validate:
       - artifact_complete: artifacts/02-plan.md
-      - sections: [Approach, Affected files, Risks, Subtasks, Testing strategy, Open questions]
+      - sections: [Approach, Affected files, Coupling, Risks, Subtasks, Testing strategy, Open questions]
       - files_exist_in_repo: Affected files
+      - evidence_verified: Coupling   # the gate re-runs each row's search and compares the hit count — a claim that cannot survive its own command is not evidence
       - subtask_coupling
     gate: { required: true }
     next: BREAKDOWN
@@ -58,19 +60,25 @@ stages:
       - artifact_complete: artifacts/04-test-report.md
       - sections: [Coverage audit, Risk-to-test map, Added tests, Deferred]
       - ac_traceability
+      - ac_proofs   # each criterion's test was WATCHED to fail without the fix, and the ledger expires when the code under test changes
       - profile_command: lint_changed
       - profile_command: test_targeted
     gate: { required: true }
     next: REVIEW
 
   REVIEW:
+    # The plan is a PASS-B input only. Pass A reviews the diff blind — handing
+    # the reviewer the implementer's plan hands it the implementer's blind spots
+    # with it, and the whole value of a second pair of eyes is that they did not
+    # already decide which shortcuts were reasonable.
     prompt: stages/review.md
     inputs: [artifacts/02-plan.md]
     output: artifacts/05-review.md
     critic: { agent: pipeline-reviewer, max_rounds: 2 }
     validate:
       - artifact_complete: artifacts/05-review.md
-      - sections: [Findings, Fixes applied, Disputed, Plan-vs-shipped check]
+      - sections: [Blind pass, Findings, Coupling, Fixes applied, Disputed, Plan-vs-shipped check]
+      - evidence_verified: Coupling   # re-checked at REVIEW: the fix loop moves code, and a coupling row proved at PLAN may no longer hold
       - review_counts
       - profile_command: lint_changed
       - profile_command: test_targeted

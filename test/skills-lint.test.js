@@ -60,6 +60,18 @@ test('runbook and agent wiring to the skills does not rot', () => {
   assert.match(dispatcher, /## `\/pipeline harvest/, 'dispatcher documents /pipeline harvest')
   assert.match(read('stages/scribe.md'), /knowledge-harvest/, 'scribe runbook verifies harvest drafts')
 
+  // change-probes: builds the Coupling table, so the two runbooks that own that
+  // section and the two agents that write it must all name it.
+  for (const rel of ['stages/plan.md', 'stages/review.md']) {
+    assert.match(read(rel), /change-probes/, `${rel} names change-probes`)
+    assert.match(read(rel), /## Coupling|`## Coupling`/, `${rel} owns the Coupling section`)
+  }
+  for (const agent of ['pipeline-planner', 'pipeline-reviewer']) {
+    const text = read(`adapters/claude-code/agents/${agent}.md`)
+    assert.match(text, /change-probes/, `${agent} names change-probes`)
+    assert.match(text, /^tools: .*\bSkill\b/m, `${agent} grants the Skill tool`)
+  }
+
   // onboard: names the ci-triage built-in and has the re-sync flow the CLI cites.
   const onboard = read('stages/onboard.md')
   assert.match(onboard, /ci-triage/, 'onboard names the ci built-in')

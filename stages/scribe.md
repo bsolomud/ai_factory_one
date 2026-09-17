@@ -19,6 +19,22 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
   `knowledge-harvest` pass may have pre-drafted rows and facts (stamped
   `Drafted by knowledge-harvest`) — verify each drafted row against this
   run's events, then route it; update existing facts rather than duplicating.
+- **Harvest every review finding into a PROBE** (the half that has to grow).
+  A strong reviewer is a learning institution: on a pilot repo the review skill
+  carries ~3,250 lines across 17 files, backed by a knowledge corpus of ~31,000
+  lines, and **397 of its rules cite the number of the PR that taught them** —
+  one of its own files says outright that they *"accrete one per retrospective,
+  which is why they are the half that grows"*. The implementing side accretes
+  nothing, so the reviewer gets sharper every PR and the gap widens forever.
+  That asymmetry, not code quality, is what makes the round count permanent.
+  So: every finding this run RECEIVED — from the pre-PR review, from the
+  critic, from a human on the PR — becomes a fact of the form
+  **"a change of shape X needs check Y, run like this"**, with the PR or run id
+  that taught it. Write it as a runnable probe, not as advice to remember: the
+  next run's `## Coupling` table can only cite a command, so a learning that
+  cannot be phrased as one is a learning that will not be applied. Route it
+  like any other learning (repo docs → proposed diff; bare repo → knowledge
+  store; generic → framework proposals).
 - **Asset audit**: run `pipeline assets`. A knowledge fact or bound skill with
   zero uses across runs is a pruning candidate (stale? unfindable index hook?
   genuinely dead?) — and an asset that was consulted but proved wrong or thin

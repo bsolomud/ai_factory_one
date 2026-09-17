@@ -23,6 +23,22 @@ Risk-to-test map, Added tests, Deferred.
   failure, not just exercise the code path. Write the justified missing tests
   in the repo's own style; screen them for flakiness; only green work is
   presented.
+- **Prove every criterion, do not assert it** (`ac_proofs` gates on this). A
+  green suite proves the tests pass. It does not prove that any of them would
+  notice the bug coming back — on a pilot PR the reviewer deleted a
+  load-bearing call and the whole suite stayed green, so a fix that pinned
+  nothing had been riding along as "covered". For each acceptance criterion:
+  1. Break the fix — revert the hunk, delete the guard, flip the condition.
+  2. Run the mapped test. It must go **RED**. If it stays green, the test is
+     about something else: fix the test, not the record.
+  3. Restore, re-run, confirm **GREEN**.
+  4. Record it in the frontmatter `proofs:` ledger — `{ ac, test, mutation }`,
+     where `mutation` states exactly what you broke, so the next person can
+     re-run the proof instead of trusting it.
+  Then run `pipeline proof-stamp` and paste what it prints into `proof_stamp:`.
+  The stamp hashes the plan's `## Affected files`, so the ledger EXPIRES the
+  moment the code under test changes — which is what stops a later fix round
+  from inheriting a proof its own change already invalidated.
 - If a profile check blocks for reasons you cannot map to the branch diff,
   follow the pipeline's **gate-triage** skill
   (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.

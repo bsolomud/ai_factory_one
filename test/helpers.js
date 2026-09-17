@@ -57,8 +57,32 @@ export function cli(args, { home, cwd }) {
 // Canonical fake artifact inputs. One home, so adding a required section (the
 // Decisions gate did this — it forced edits at every call site) is a one-line
 // change here, not a sweep across the test files.
-export const contextSections = (over = {}) => ({ Requirements: 'r', 'Acceptance criteria': '1. x', Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.', ...over })
+export const contextSections = (over = {}) => ({ Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.', ...over })
 export const CLEAN_REVIEW_COUNTS = 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }'
+
+// A criterion table that satisfies ac_population: numbered rows, and a 4th
+// column naming the population the criterion is about.
+export const AC_TABLE = [
+  '| # | Criterion | Verified by | Population |',
+  '|---|-----------|-------------|------------|',
+  '| 1 | the thing is true | `tests/app_test.sh` | both |'
+].join('\n')
+
+// A coupling row evidence_verified can re-run in any repo state: the token
+// appears nowhere, so the command always prints 0 lines. That is not a degenerate
+// fixture — a 0-hit row is the shape that PROVES absence ("nothing else writes
+// this"), which is the row that catches a missing backfill.
+export const COUPLING_OK = [
+  '| Subject | Evidence command | Hits | Disposition |',
+  '|---------|------------------|------|-------------|',
+  '| `app-v1` writers | `git grep -n AIFACTORY_ABSENT_TOKEN` | 0 | no other writer — nothing downstream to update |'
+].join('\n')
+
+// Proof-ledger frontmatter for the single AC in AC_TABLE. The stamp is NOT
+// hardcodable — it hashes the plan's affected files as they are on disk — so
+// callers pass what `pipeline proof-stamp` returned.
+export const proofsFrontmatter = stamp =>
+  `proofs:\n  - { ac: 1, test: 'tests/app_test.sh:1', mutation: 'reverted the change in src/app.sh' }\nproof_stamp: ${stamp}`
 
 // Write an artifact with completed frontmatter + given sections (fake stage work).
 // extraFrontmatter: raw YAML lines appended to the frontmatter (e.g. the review

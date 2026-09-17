@@ -31,8 +31,19 @@ Requirements, Acceptance criteria, Decisions, Findings, Open questions.
 - **Ask the developer** everything needed to plan confidently: ambiguities,
   constraints, scope edges, and what "done" looks like. One batch, in chat.
 - From their answers, write `## Acceptance criteria` as a table
-  (# | Criterion | Verified by): numbered, each independently checkable —
-  these drive the plan's testing strategy and QA's audit later.
+  (# | Criterion | Verified by | Population): numbered, each independently
+  checkable — these drive the plan's testing strategy and QA's audit later.
+  - **Write the criterion as an observable end state, never as a mechanism.**
+    "The form saves the mode" is a claim about code: it passes while every
+    record already out there stays broken. "A school stored as bulk runs delta
+    on its next scheduled sync" is a claim about the world, and it stays red
+    until the existing data is handled too. A mechanism-level criterion is how
+    a change ships as a fraction of the fix while every check is green.
+  - **Population** is machine-checked (`ac_population`) and takes one of
+    `new` / `existing` / `both` / `n-a`. Answer it per criterion, out loud,
+    with the developer: *what about the records that are already wrong?* If the
+    answer is `existing` or `both`, the migration/backfill belongs in this run's
+    scope or in the out-of-scope list — decided here, not discovered at review.
 - Resolve `## Decisions` WITH the developer — scope boundary (fix-here vs
   root-cause), product-intent ambiguities, secrets/config policy (what may
   carry a committed default vs must be ENV-injected), migration/rollout, and

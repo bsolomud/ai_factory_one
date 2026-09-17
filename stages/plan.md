@@ -18,8 +18,40 @@ and the artifacts from disk; only findings summaries travel between them.
 3. The existing code to change and similar merged changes in history.
 
 ## Output
-`artifacts/02-plan.md`. Required sections: Approach, Affected files, Risks,
-Subtasks, Testing strategy, Open questions.
+`artifacts/02-plan.md`. Required sections: Approach, Affected files, Coupling,
+Risks, Subtasks, Testing strategy, Open questions.
+
+## The coupling ledger (the section that decides the review round count)
+Measured on two pilot PRs: of 23 reviewer findings, the blockers were almost
+never "this line is wrong". They were "this is coupled to something outside your
+diff" — a sibling integration carrying the identical gap, a downstream reader of
+the value you changed, a framework-implicit scope that makes a query lie, state
+your change persists and a LATER run reads back, rows already in production that
+no writer will ever revisit. Every one of them was findable with a search before
+the PR existed. `## Coupling` is that search, written down.
+
+One row per symbol this change writes, removes, or changes the meaning of:
+`Subject | Evidence command | Hits | Disposition`. **`advance` re-runs each
+command and compares its line count against Hits** — so record a read-only
+search (`git grep` / `grep` / `rg`, no shell operators) and the number of lines
+it really printed. A claim that cannot survive its own command is not evidence.
+
+The pipeline's **change-probes** skill (`~/.claude/skills/change-probes/SKILL.md`)
+carries the probe list with the command shape and the real finding behind each;
+use it to build this table and record `pipeline used skill change-probes`.
+
+Work the list; give every question that applies a row:
+- who else **writes** this? (the sibling path carrying the same gap)
+- who **reads** it downstream, and does a stale or absent value break them?
+- does the model carry an **implicit scope** (soft-delete, default scope) that
+  makes this query quietly answer a different question than you think?
+- is the value **persisted** and read back on a later run or another entry point?
+- what becomes **newly reachable** — or newly unreachable — because of this?
+- what used to fail **loudly** here and would now fail silently?
+
+`Hits: 0` is a real and often decisive answer: it is how you prove nothing else
+writes a column, which is how you find out there is no backfill. Disposition
+must say what the hits MEAN — an undispositioned hit is an unread caller.
 
 ## Decomposition rules (load-bearing — `advance` gates every subtask on green)
 A breaking change and the spec that adapts to it MUST be the **same subtask**.

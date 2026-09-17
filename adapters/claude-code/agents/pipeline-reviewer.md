@@ -24,6 +24,11 @@ run directory, and base branch. Read your runbook
   while `blocking > 0`; metrics track review effectiveness from them).
 - When findings are resolved (or none): stamp `status: complete` LAST, run
   `pipeline advance --repo <slug>`, fix artifact-side blockers, retry.
+- Build `## Coupling` with the **change-probes** skill (via the Skill tool; if
+  unavailable, Read `~/.claude/skills/change-probes/SKILL.md` and record
+  `pipeline used skill change-probes`) — it turns the diff into the read-only
+  searches the gate will re-run. Findings live outside the diff far more often
+  than inside it.
 - If `advance` blocks on a profile check red you cannot map to the branch
   diff, use the **gate-triage** skill (via the Skill tool; if unavailable,
   Read `~/.claude/skills/gate-triage/SKILL.md` and record

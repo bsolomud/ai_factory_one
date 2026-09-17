@@ -1,8 +1,9 @@
 import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { acAccounting, acceptanceCriteriaIds, backtickPaths, parseArtifact, sections, pathsInSection } from './artifacts.js'
+import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, parseArtifact, sections, pathsInSection } from './artifacts.js'
 import { artifactFor } from './config.js'
+import { proofStamp } from './scan.js'
 import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
 import { SKIP_KINDS } from './state.js'
 
@@ -325,6 +326,171 @@ export const validators = {
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
+  // ── Evidence discipline ───────────────────────────────────────────────────
+  // A pipeline artifact is a pile of CLAIMS; a reviewer arrives with EVIDENCE.
+  // The PR review round is where the two finally meet, so the round count
+  // tracks the number of unproven claims — a quantity code quality does not
+  // bound. Measured on two pilot PRs: 23 reviewer findings, and the blockers
+  // were never "this line is wrong" but "this is coupled to something outside
+  // your diff" — a sibling code path, a downstream reader, a framework-implicit
+  // scope, state persisted for the NEXT run, rows already in production.
+  // These validators make the artifact's own claims falsifiable at the gate.
+
+  // Re-runs the search command each evidence row records and compares the hit
+  // count against the number the row declares. A claim that cannot survive its
+  // own command is not evidence — and a count that has drifted since it was
+  // written means the ground moved under the claim.
+  evidence_verified(ctx, sectionName) {
+    const rel = ctx.stageDef.output
+    if (!rel) return fail(`stage ${ctx.stageName} has an 'evidence_verified' validator but no output artifact — fix pipeline.yml`)
+    const artifact = parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const section = sections(artifact.body)[sectionName]
+    if (section === undefined) return fail(`artifact ${rel} has no '## ${sectionName}' section — add it`)
+
+    // Honest escape hatch: a change really can couple to nothing, but saying so
+    // costs a reason. A bare "None." would let the expensive section be skipped
+    // by reflex, which is the failure this validator exists to prevent.
+    const none = section.match(/^none\b[\s—:-]*(.*)$/is)
+    if (none) {
+      return none[1].trim().length >= 12
+        ? ok()
+        : fail(`'## ${sectionName}' in ${rel} says "None" without a reason — write 'None — <why this change couples to nothing outside its own diff>' (a reason, not a full stop). If you cannot write that sentence honestly, the section is not empty.`)
+    }
+
+    const rows = evidenceRows(section)
+    if (rows.length === 0) {
+      return fail(`'## ${sectionName}' in ${rel} records no evidence rows — write it as a table (Subject | Evidence command | Hits | Disposition) where the command is a read-only search (git grep / grep / rg) and Hits is the number of lines it prints. The gate RE-RUNS each command and compares.`)
+    }
+    const reasons = []
+    for (const { subject, command, hits, disposition, line } of rows) {
+      const where = subject || `row ${line}`
+      if (!command) {
+        reasons.push(`'## ${sectionName}' row "${where}" in ${rel} carries no backticked evidence command — every row states how it was checked, as a read-only search (git grep / grep / rg) in a \`backticked\` cell`)
+        continue
+      }
+      const argv = evidenceArgv(command)
+      if (!argv) {
+        reasons.push(`'## ${sectionName}' row "${where}" records \`${command}\`, which is not a re-runnable read-only search — the gate re-runs it, so it must start with 'git grep', 'grep' or 'rg' and carry no shell operators (no |, ;, &&, $(), >)`)
+        continue
+      }
+      if (hits == null) {
+        reasons.push(`'## ${sectionName}' row "${where}" declares no Hits count — record the number of lines \`${command}\` prints (0 is a real, useful answer: it is how you prove nothing else writes this)`)
+        continue
+      }
+      if (!disposition) {
+        reasons.push(`'## ${sectionName}' row "${where}" has an empty Disposition — say what the hits MEAN for this change: 'safe because …', 'handled in this diff', or 'out of scope because …'. An undispositioned hit is an unread caller.`)
+        continue
+      }
+      const result = runEvidence(ctx.repoDir, argv)
+      if (result.error) {
+        reasons.push(`'## ${sectionName}' row "${where}": the gate could not re-run \`${command}\` — ${result.error}. Record a command that runs from the repo root.`)
+        continue
+      }
+      if (result.hits !== hits) {
+        reasons.push(`'## ${sectionName}' row "${where}" declares ${hits} hit(s) for \`${command}\`, but re-running it now prints ${result.hits}. Either the count was never taken from the command, or the code moved since — re-run it, re-read the hits, and re-check the disposition against what it returns NOW.`)
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // Every acceptance criterion needs a test that has been SEEN to fail without
+  // the fix. A green suite proves the tests pass, not that they would notice
+  // the bug coming back: on a pilot PR the reviewer deleted a load-bearing call
+  // and the suite stayed green, which is how a shipped fix reads as covered
+  // while pinning nothing. The stamp makes the proof expire when the code under
+  // test changes, so a later fix round cannot inherit an earlier round's proof.
+  ac_proofs(ctx) {
+    const contextRel = artifactFor(ctx.config, '-context.md')
+    const context = contextRel && parseArtifact(artifactAbs(ctx, contextRel))
+    if (!context) return fail(`cannot check acceptance-criteria proofs: context artifact not found`)
+    const ids = acceptanceCriteriaIds(context.body)
+    if (ids.length === 0) return ok() // ac_traceability owns the "no criteria" failure — one voice per defect
+
+    const rel = ctx.stageDef.output
+    const report = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!report) return fail(`artifact ${rel} does not exist yet`)
+    const proofs = report.frontmatter?.proofs
+    if (!Array.isArray(proofs)) {
+      return fail(`artifact ${rel} frontmatter needs a proof ledger — proofs: [{ ac: 1, test: '<the test that proves it>', mutation: '<what you broke to see it go red>' }, …]. For each criterion: break the fix, watch the mapped test go RED, restore it, watch it go GREEN, and record what you broke. A criterion whose test never went red is untested, whatever the coverage report says.`)
+    }
+    const reasons = []
+    const proved = new Set()
+    proofs.forEach((p, i) => {
+      const n = typeof p?.ac === 'number' ? p.ac : parseInt(String(p?.ac ?? '').replace(/^AC[#-]?/i, ''), 10)
+      if (!Number.isInteger(n)) {
+        reasons.push(`proofs[${i}] in ${rel} names no acceptance criterion — set 'ac: <n>' matching a numbered row in the context's '## Acceptance criteria'`)
+        return
+      }
+      if (!ids.includes(n)) {
+        reasons.push(`proofs[${i}] in ${rel} claims AC#${n}, which is not a numbered criterion in the context artifact — correct the id`)
+        return
+      }
+      if (!String(p.test || '').trim()) {
+        reasons.push(`the proof for AC#${n} in ${rel} names no test — record the test that goes red, as path:line`)
+        return
+      }
+      if (!String(p.mutation || '').trim()) {
+        reasons.push(`the proof for AC#${n} in ${rel} records no mutation — state exactly what you broke to make the test fail ("reverted the guard at app/x.rb:41"). Without it nobody can re-run the proof, which is how proofs quietly rot.`)
+        return
+      }
+      proved.add(n)
+    })
+
+    const deferred = sections(report.body)['Deferred'] ?? ''
+    for (const n of ids) {
+      if (proved.has(n)) continue
+      if (acRef(n).test(deferred)) continue
+      reasons.push(`acceptance criterion AC#${n} has no proof in ${rel} — add a 'proofs:' entry recording the test you watched go RED without the fix, or park AC#${n} under '## Deferred' with the reason. A criterion mapped to a test that was never seen to fail is a coverage claim, not coverage.`)
+    }
+
+    // Staleness: the ledger is evidence about one state of the code under test.
+    const stamp = report.frontmatter?.proof_stamp
+    const planRel = artifactFor(ctx.config, '-plan.md')
+    const plan = planRel && parseArtifact(artifactAbs(ctx, planRel))
+    const affected = plan ? pathsInSection(sections(plan.body)['Affected files'] ?? '').map(p => p.path) : []
+    if (affected.length > 0 && proved.size > 0) {
+      const current = proofStamp(ctx.repoDir, affected)
+      if (!stamp) {
+        reasons.push(`artifact ${rel} frontmatter needs 'proof_stamp: ${current}' — run 'pipeline proof-stamp' right after the last proof and paste what it prints. The stamp is what makes the ledger expire when the code under test changes; without it a later fix round silently inherits an earlier round's proof.`)
+      } else if (String(stamp).trim() !== current) {
+        reasons.push(`the proof ledger in ${rel} is STALE — it was stamped ${stamp}, but the code under test now hashes to ${current}. Something in the plan's '## Affected files' changed after the proofs were recorded, so none of them is evidence about the code you are about to ship. Re-run every proof (break it, see red, restore, see green), then re-stamp with 'pipeline proof-stamp'.`)
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // Every criterion declares WHICH POPULATION it is about. The most expensive
+  // pilot defect was a fix that repaired the writer and left every existing row
+  // broken — locally correct, ~20% of the actual job, and the criterion never
+  // failed because it was written about the mechanism instead of the world.
+  ac_population(ctx) {
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const section = sections(artifact.body)['Acceptance criteria'] ?? ''
+    const reasons = []
+    let seen = 0
+    for (const line of section.split('\n')) {
+      const cells = tableCells(line)
+      if (!cells || !/^\d+$/.test(cells[0] ?? '')) continue
+      seen++
+      const n = cells[0]
+      const population = (cells[3] ?? '').toLowerCase()
+      if (!population) {
+        reasons.push(`acceptance criterion AC#${n} declares no Population — add the 4th column (# | Criterion | Verified by | Population) and answer one of: new (only records created after this ships) / existing (rows already out there) / both / n-a. The question "what about the rows that are already broken?" is the one that turns a partial fix into a shipped fix.`)
+        continue
+      }
+      if (!/\b(new|existing|both|n-?\/?a)\b/.test(population)) {
+        reasons.push(`acceptance criterion AC#${n} declares population '${cells[3]}', which is not one of: new / existing / both / n-a. Pick the vocabulary term so the plan and QA can act on it.`)
+      }
+    }
+    if (seen === 0) {
+      return fail(`the context artifact's '## Acceptance criteria' has no numbered table rows — write it as | # | Criterion | Verified by | Population |, numbered from 1`)
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
   substate_set(ctx, keys) {
     const reasons = []
     for (const key of keys) {
@@ -396,6 +562,79 @@ function parseSubtaskFiles(text) {
   }
   return subtasks
 }
+
+// Cells of one markdown table row, or null if the line is not a row. The
+// separator row (|---|---|) is a row shape but carries no data.
+function tableCells(line) {
+  const t = line.trim()
+  if (!t.startsWith('|')) return null
+  if (/^\|[-\s|:]+\|?$/.test(t)) return null
+  // Split on unescaped pipes only. An alternation inside a search pattern
+  // (`git grep -nE 'a\|b'`) is markdown-escaped like any other literal pipe in a
+  // cell; splitting on it blindly would chop the command in half and report the
+  // row as malformed, which pushes authors toward weaker patterns.
+  return t.replace(/^\|/, '').replace(/\|$/, '')
+    .split(/(?<!\\)\|/)
+    .map(c => c.replace(/\\\|/g, '|').trim())
+}
+
+// Evidence rows: Subject | Evidence command | Hits | Disposition. The header
+// row is the first row carrying no backticked command — dropped, not parsed.
+function evidenceRows(text) {
+  const rows = []
+  text.split('\n').forEach((line, i) => {
+    const cells = tableCells(line)
+    if (!cells || cells.length < 2) return
+    const command = (cells[1].match(/`([^`]+)`/) || [])[1] ?? null
+    const hitsCell = (cells[2] ?? '').trim()
+    const hits = /^\d+$/.test(hitsCell) ? parseInt(hitsCell, 10) : null
+    const subject = cells[0].replace(/`/g, '').trim()
+    // Header row: no command, and the column label where a count belongs.
+    if (!command && /^(hits?|count|n)$/i.test(hitsCell)) return
+    rows.push({ subject, command, hits, disposition: cells.slice(3).join(' ').trim(), line: i + 1 })
+  })
+  return rows
+}
+
+// Read-only searches only. The gate RE-RUNS what the artifact recorded, so the
+// command must be incapable of changing anything — and it is parsed into argv
+// and executed without a shell, which makes metacharacters inert rather than
+// merely discouraged.
+const EVIDENCE_PREFIXES = [['git', 'grep'], ['grep'], ['rg']]
+const SHELL_OPERATORS = /[|;&><`$(){}]/
+
+function tokenizeCommand(cmd) {
+  const tokens = []
+  for (const m of cmd.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) tokens.push(m[1] ?? m[2] ?? m[3])
+  return tokens
+}
+
+function evidenceArgv(cmd) {
+  // Operators are checked OUTSIDE quotes only: `git grep -n 'a|b'` is a regex,
+  // not a pipeline, and refusing it would push authors toward weaker patterns.
+  const unquoted = cmd.replace(/"[^"]*"|'[^']*'/g, '')
+  if (SHELL_OPERATORS.test(unquoted)) return null
+  const argv = tokenizeCommand(cmd)
+  if (argv.length === 0) return null
+  return EVIDENCE_PREFIXES.some(p => p.every((tok, i) => argv[i] === tok)) ? argv : null
+}
+
+function runEvidence(repoDir, argv) {
+  try {
+    const out = execFileSync(argv[0], argv.slice(1), {
+      cwd: repoDir, encoding: 'utf8', timeout: 60_000, maxBuffer: 32 * 1024 * 1024, stdio: 'pipe'
+    })
+    return { hits: countLines(out) }
+  } catch (e) {
+    // The grep family exits 1 for "no match". That is a RESULT, not a failure —
+    // and the most valuable one there is: it is how a claim of absence ("no
+    // other writer touches this column") gets proved instead of asserted.
+    if (e.status === 1) return { hits: 0 }
+    return { error: (e.stderr || e.message || '').trim().split('\n')[0] || `exit ${e.status ?? '?'}` }
+  }
+}
+
+const countLines = out => out.split('\n').filter(l => l !== '').length
 
 const ok = () => ({ ok: true })
 const fail = reason => ({ ok: false, reasons: [reason] })

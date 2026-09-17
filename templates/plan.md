@@ -32,6 +32,46 @@ choices rest on curated docs vs inference. -->
      | `app/x.rb` | what changes here | |
      | `app/y.rb` | scaffolded | (new) | -->
 
+## Coupling
+<!-- The section that answers "what ELSE touches this?" — and proves the answer.
+
+     Reviewers almost never find "this line is wrong". They find "this is coupled
+     to something outside your diff": a sibling code path with the same gap, a
+     downstream reader of the value you changed, a framework-implicit scope
+     (soft-delete, default scope, paranoid), state your change persists that the
+     NEXT run reads back, rows already in production. Every one of those is
+     findable with a search BEFORE the PR exists — which is what this table is.
+
+     One row per symbol this change writes, removes, or changes the MEANING of.
+     Columns: Subject | Evidence command | Hits | Disposition.
+
+     Machine-checked (evidence_verified): the gate RE-RUNS each command and
+     compares its line count against Hits. So the command must be a read-only
+     search — `git grep`, `grep` or `rg`, no pipes or shell operators — and Hits
+     must be the number of lines it actually printed. A row that cannot survive
+     its own command is not evidence.
+
+     Hits: 0 is a real and often decisive answer — it is how you prove nothing
+     else writes a column, which is exactly how you discover there is no backfill.
+
+     Disposition must say what the hits MEAN: 'safe because …', 'handled in this
+     diff', or 'out of scope because …'. An undispositioned hit is an unread caller.
+
+     Ask each of these, and give the ones that apply a row:
+       - who else WRITES this? (a sibling integration with the identical gap)
+       - who READS it downstream, and does a stale/other value break them?
+       - does the model carry an implicit scope that makes this query lie?
+       - is this value persisted and read back on a later run or another entry point?
+       - which code becomes newly REACHABLE, or newly unreachable, because of this?
+       - what used to fail LOUDLY here and would now fail silently?
+
+     | Subject | Evidence command | Hits | Disposition |
+     |---------|------------------|------|-------------|
+     | `auto_sync_mode` writers | `git grep -n auto_sync_mode -- app lib` | 3 | 2 reads (safe), 1 writer — the form, fixed here; no backfill exists ⇒ AC#2 covers existing rows |
+
+     Write 'None — <why this change couples to nothing outside its own diff>' if
+     it genuinely does. A bare 'None.' is refused: the reason is the check. -->
+
 ## Risks
 <!-- A table, one row per risk. Columns: Risk | Severity (low/med/high) | Test map.
      EVERY risk must reappear (by the same wording) in the TEST stage's

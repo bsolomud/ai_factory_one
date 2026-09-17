@@ -8,22 +8,66 @@ Catch issues while fixing them is private and cheap — before a PR exists.
    as-is** — it is the single source of truth (it may match a CI reviewer).
    Otherwise use the built-in passes below. When you use a bound repo skill,
    record it: `pipeline used skill <its path>` (feeds the assets report).
-3. `artifacts/02-plan.md` for the architecture check.
+   **If the PR will be judged by a reviewer you can run, run it HERE**, in the
+   same unattended mode it will run in later. Testing against the actual grader
+   before submitting is the cheapest round you will ever skip.
+3. `artifacts/02-plan.md` — **a PASS-B input only**. See below.
 
 ## Output
-`artifacts/05-review.md`. Required sections: Findings, Fixes applied,
-Disputed, Plan-vs-shipped check.
+`artifacts/05-review.md`. Required sections: Blind pass, Findings, Coupling,
+Fixes applied, Disputed, Plan-vs-shipped check.
+
+## Two passes, and the order is load-bearing
+**Pass A — blind.** A fresh `pipeline-reviewer` gets the branch diff and the
+repo, and is NOT given `01-context.md` or `02-plan.md`. Withholding the plan is
+the whole point: a model reviewing work it can see the rationale for corrects
+far less than the same model shown identical code as someone else's, and the
+plan is the most contaminating artifact in the run because it carries the
+reasoning that made every shortcut feel reasonable at the time. A pilot run's
+self-review — done in-context, with the plan — found naming and documentation
+issues and walked straight past a blocker about state persisted for the next
+run. The reviewer who found it had the diff and nothing else.
+
+Record in `## Blind pass`: what the diff appears to be trying to do judged only
+from the code, and which parts could not be explained from the repo alone.
+
+**Pass B — informed.** Only now open the plan and the context, and do the
+plan-vs-shipped check. A gap between the blind reading and the plan is itself a
+finding — usually about legibility, often about the code.
 
 ## Procedure (executed by `pipeline-reviewer`, fresh context; fixes by `pipeline-implementer`)
 - Review the full diff with the bound skill's instructions or the built-in
   passes: logic/correctness, security, performance,
   style-consistency-with-surrounding-code. Verification-before-flagging: a
   finding without checked evidence is noise — drop it.
+- **Re-verify `## Coupling`** against the shipped code with the **change-probes**
+  skill (`~/.claude/skills/change-probes/SKILL.md`; record
+  `pipeline used skill change-probes`): carry the plan's rows
+  forward, re-run each command (`evidence_verified` re-runs them at the gate
+  too), and ADD a row for every symbol the implementation or the fix loop newly
+  writes, removes, or repurposes. A plan-time hit count describes the code as
+  planned; the rows the fix loop touched are exactly the ones most likely to
+  have moved.
 - **Confirmed findings** → the dispatcher hands them to the implementer (fix
   mode: stay inside the plan boundary; amend the plan if a fix requires it;
   commit only if the run is using commits), then a fresh reviewer verifies and
   records them under
   `## Fixes applied`. Max 2 reviewer rounds, then escalate leftovers.
+- **The fix loop is where the next round's findings get written.** Measured on
+  two pilot PRs: 23 reviewer findings, and **12 of them were on code that did
+  not exist when the PR was opened** — written to satisfy an earlier comment. In
+  one case a round-1 *nit* ("name the record via its global id") produced a
+  round-2 correctness bug; in another, hoisting a check to fix one comment
+  opened a silent data-loss path. A fix is a change like any other, produced
+  under worse conditions than the original: no plan, no coupling analysis, and a
+  review comment acting as a spec narrower than the truth. So:
+  - Fix **blockers and nits in separate rounds.** A nit's fix that rides along
+    with a blocker's fix gets none of the scrutiny and all of the blast radius.
+  - Every fix that touches a plan `## Affected files` path **invalidates the
+    proof ledger** — `ac_proofs` will say so at the gate. Re-run the proofs; do
+    not re-stamp without re-running them.
+  - A fix that introduces a caller, a persisted value, or a new nil path is a
+    new `## Coupling` Subject, not a footnote on an existing row.
 - **Disputed findings** → record both sides under `## Disputed`; the developer
   arbitrates at the gate.
 - **Plan-vs-shipped check**: does the final shape still match the approved

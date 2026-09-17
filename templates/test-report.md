@@ -2,6 +2,18 @@
 run: __RUN__
 stage: __STAGE__
 status: draft
+# The proof ledger — machine-read by ac_proofs (gate). One entry per acceptance
+# criterion: the test you WATCHED go red without the fix, and exactly what you
+# broke to make it red. A green suite proves the tests pass; only a test that has
+# been seen to fail proves it would notice the bug coming back.
+#   proofs:
+#     - { ac: 1, test: 'spec/x_spec.rb:41', mutation: 'reverted the guard at app/x.rb:22' }
+# proof_stamp comes from 'pipeline proof-stamp', run right after the last proof.
+# It hashes the plan's '## Affected files', so the ledger EXPIRES the moment the
+# code under test changes — which is what stops a fix round from inheriting an
+# earlier round's proof.
+proofs: []
+proof_stamp:
 ---
 
 # Test Report — __RUN__

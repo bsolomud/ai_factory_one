@@ -64,6 +64,24 @@ export function hashPath(abs) {
   return 'sha256:' + h.digest('hex')
 }
 
+// The proof ledger's staleness anchor. A mutation proof ("revert this line and
+// the mapped test goes red") is evidence about the code it ran against and
+// nothing else: a later fix round can silently make it non-load-bearing while
+// the suite stays green. Observed in the wild on a pilot PR — a round-2 commit
+// added a filter that made a round-1 proof unobservable, and only the reviewer
+// re-running the mutation by hand caught it. Stamping the ledger with a digest
+// over the code under test turns that silent decay into a red gate.
+export function proofStamp(repoDir, relPaths) {
+  const h = createHash('sha256')
+  for (const rel of [...new Set(relPaths)].sort()) {
+    h.update(rel)
+    h.update('\0')
+    h.update(hashPath(path.join(repoDir, rel)) ?? 'absent')
+    h.update('\0')
+  }
+  return 'proof:' + h.digest('hex').slice(0, 16)
+}
+
 function walk(root, prefix) {
   const out = []
   for (const name of fs.readdirSync(path.join(root, prefix)).sort()) {

@@ -4,7 +4,10 @@ Make the next run on this repo smarter. The knowledge layer is the product.
 
 ## Inputs
 Every artifact of this run + `events.jsonl` (gate notes, blocked reasons,
-skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
+skipped checks, asset usage) + the cross-run usage report: `pipeline assets` +
+**the round ledger**: `pipeline round list` and the run's
+`findings_missed_by` in `pipeline metrics --run <id>`. That last one is the work
+list — every `missed_by` name that is not `none` is a probe this repo owes.
 
 ## Output
 `artifacts/08-retro.md`. Required sections: Plan-vs-shipped, Learnings, Routing.
@@ -35,6 +38,15 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
   cannot be phrased as one is a learning that will not be applied. Route it
   like any other learning (repo docs → proposed diff; bare repo → knowledge
   store; generic → framework proposals).
+
+  **This is now mechanical, not aspirational.** Work the run's
+  `findings_missed_by` tally: every name that is not `none` must exist as a
+  probe in the knowledge store when this stage ends. Then run
+  `pipeline probes --lint` — it reports every fact that carries no runnable
+  probe, and every probe the Coupling gate would refuse to re-run. Measured
+  before this was enforced: 10 facts across 29 runs, and not one of them
+  carrying a command, so the store could not be cited by a single `## Coupling`
+  row it was written to inform.
 - **Asset audit**: run `pipeline assets`. A knowledge fact or bound skill with
   zero uses across runs is a pruning candidate (stale? unfindable index hook?
   genuinely dead?) — and an asset that was consulted but proved wrong or thin
@@ -48,10 +60,18 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
   - **Bare repo** → write the fact into this repo's store (the
     `knowledge_dir` reported by `pipeline status`). WRITE it now — routing a
     fact without writing it is the failure mode this stage exists to prevent.
-    Format: one fact per file, kebab-case name (`<topic>.md`), containing the
-    fact in 1-3 sentences, then `## Why` (the consequence of not knowing it)
-    and `## Evidence` (this run id + the file/PR/event that proves it). If a
-    file for the topic already exists, update it instead of duplicating.
+    Format: one fact per file, kebab-case name (`<topic>.md`), built from
+    `templates/knowledge-fact.md`: frontmatter carrying the machine-readable
+    `probe:` (its `when:` globs, the read-only `run:` command, and the `asks:`
+    question a hit answers — a **search** whose count becomes a `## Coupling`
+    row, or an **inspection** that answers a question no search can) plus
+    `taught_by:`, then the fact in 1-3 sentences,
+    then `## Why` (the consequence of not knowing it) and `## Evidence` (this
+    run id + the file/PR/event that proves it). The frontmatter is what
+    `pipeline probes` reads, so a fact whose probe is missing or is not a
+    read-only search is a fact no future run can use — `pipeline probes --lint`
+    names both. If a file for the topic already exists, update it instead of
+    duplicating.
     LAST, append one line to `knowledge_dir/index.md`:
     `- [<topic>](<topic>.md) — <one-line hook>` (create the index if missing).
     CONTEXT and PLAN read the index first, so the hook line decides whether
@@ -63,6 +83,8 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets`.
     harvests them.
 
 ## Done when
+`pipeline probes --lint` reports no fact this run added without a runnable
+probe, and every non-`none` `missed_by` from the round ledger exists as one.
 Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Artifact complete;
 `pipeline advance` (auto-approvable gate); report the
-routed learnings and STOP. The run is DONE.
+routed learnings — and the probes now in the store — and STOP. The run is DONE.

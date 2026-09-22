@@ -61,9 +61,26 @@ Rules:
 
 Repo-shaped learnings (gotchas, environment quirks, worktree preconditions,
 flaky tests) become facts in `knowledge_dir` — **in the exact format defined
-in `~/.ai_factory_one/stages/scribe.md` under Routing → "Bare repo". Read
-that section first and follow it; do not improvise a format.** Additionally:
+in `~/.ai_factory_one/stages/scribe.md` under Routing → "Bare repo", whose
+skeleton is `~/.ai_factory_one/templates/knowledge-fact.md`. Read both first
+and follow them; do not improvise a format.** Additionally:
 
+- **Give every fact that has a searchable shape a `probe:` in its
+  frontmatter** — `when:` globs, a read-only `run:` command, and the `asks:`
+  question a hit answers. This is what `pipeline probes` hands the next
+  planner, and the plan's `## Coupling` table can cite ONLY a command: a fact
+  written as prose alone is one no run will ever apply. Verify with
+  `pipeline probes --lint --repo <slug>` before reporting; it names both
+  probe-less facts and commands the Coupling gate would refuse to re-run.
+  A fact with genuinely no searchable shape (an environment gotcha, a product
+  decision) may omit it — say so in the body so the lint gap reads as a
+  decision rather than an oversight.
+- **Back-fill the round ledger where the events prove one.** A `reopened`
+  event whose reason names PR feedback, or a `09-pr-feedback.md` artifact, is
+  a round that happened before the ledger existed. Do NOT write events — you
+  never touch `events.jsonl` — but DO surface each one in the retro's
+  Learnings table with its `missed_by` classification, so SCRIBE can record
+  it and so the probe it implies gets written.
 - Dedupe by topic: if a fact file for the topic exists, update it (append
   evidence) instead of duplicating.
 - The `index.md` hook line comes LAST, once per fact file, and only for new

@@ -1,7 +1,17 @@
 # Stage: CI (loops per red run)
 
-Diagnose red CI with discipline. The loop lives inside this stage — the stage
-advances only when CI is green and the human has merged.
+Diagnose red CI with discipline. The loop lives inside this stage; the stage
+advances when **CI is green** — merging is a separate, human, out-of-session act
+and is recorded, not waited for.
+
+> **Why the gate is green CI and not the merge.** It used to be both, and the
+> consequence was measured: 18 of 29 pilot runs were aborted and 15 of those sat
+> at exactly this gate, because a merge lands hours or days later and nobody
+> comes back to a finished session to advance it. SCRIBE — the one stage whose
+> entire job is to write down what the run learned — therefore ran on 6 of 29
+> runs, and every abort threw away a run's worth of learnings that were sitting
+> in its own audit log. A gate that cannot be reached is not a safeguard; it is
+> a leak. Record the merge state honestly in `## Outcome` and move on.
 
 ## Inputs
 1. Failed run logs: via the CI provider recorded in the profile, or ask the
@@ -39,7 +49,17 @@ sections: Runs analyzed, Classification, Fixes, Outcome.
   (Per-run rows still accumulate in `## Runs analyzed` — History is for
   superseded whole-round analyses, not individual runs.)
 
+- **A red CI run is a round.** Open it (`pipeline round open ci`), record each
+  failure you had to fix as a finding
+  (`pipeline finding --class <…> --missed-by <probe | none> --summary "<one line>"`),
+  and close it. A CI failure that a local check could have caught is the
+  cheapest possible probe to learn, and it is invisible unless recorded.
+
 ## Done when
-CI green and the developer has merged (merging is a human act — never merge).
-Update `## Outcome` and the BLUF header (reflecting the latest run), set
-`status: complete`, `pipeline advance`, STOP.
+CI is green. Record the merge state in `## Outcome` — merged, or awaiting the
+developer's merge with what still has to happen (merging is a human act — never
+merge). Update the BLUF header (reflecting the latest run), set
+`status: complete`, `pipeline advance`, STOP. Do NOT hold the run open waiting
+for a merge: SCRIBE is next, and the learnings are worth more written down now
+than perfectly sequenced later. If the merge later needs work, `pipeline reopen`
+brings the run back.

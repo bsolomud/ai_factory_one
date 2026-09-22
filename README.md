@@ -29,6 +29,22 @@ implementer's blind spots. The plan is opened only for pass B's plan-vs-shipped
 check. The `change-probes` skill turns a diff into the searches that fill
 `## Coupling`.
 
+**Third principle — a round you did not record is a round you cannot remove.**
+The goal is that any task closes in **≤2 rounds**, and the rounds that decide it
+arrive from outside the run: a reviewer on the PR, a red CI. So they are a
+first-class ledger (`pipeline round` / `pipeline finding`), and every finding
+carries a **`missed_by`** — the name of the search that *would* have caught it
+before the code existed. SCRIBE must leave the repo with a probe of that name,
+`pipeline probes` hands it to the next planner matched against their diff, and
+the plan's `## Coupling` table cites it. That loop is the only mechanism here
+that lowers the round count over time; the gates above only stop it rising.
+
+Its absence was the measurable asymmetry: a repo's review skill accretes a rule
+per retrospective (one pilot repo's cites 397 PR numbers), while the
+implementing side accreted nothing — 10 knowledge facts across 29 runs, none of
+them carrying a command, so not one could be cited by the section it was written
+to inform.
+
 Design docs: [`MVP-PLAN.md`](MVP-PLAN.md) (this MVP's scope + verification criteria).
 
 ## Layout
@@ -170,9 +186,19 @@ PR → CI loop → retro.
 /pipeline show                      # the current artifact/diff, for review
 /pipeline repos                     # repos the pipeline knows, active runs
 /pipeline feedback "<note>"         # capture a reaction (feeds retro + metrics)
-/pipeline metrics                   # pilot numbers for this repo
-/pipeline doctor                    # validate the repo profile
+/pipeline metrics                   # rounds-to-merge and the quality signals
+/pipeline probes [--lint]           # searches this repo learned; audit the store
+/pipeline doctor [--env]            # validate the profile / the working tree
 ```
+
+Stage agents also use a few verbs directly, and they matter enough to name here:
+
+| Verb | What it is for |
+|------|----------------|
+| `pipeline check` | The **dry run**: the gate's own validators, nothing recorded, no round-trip. Every stage runbook requires it before `advance` — 67 of the pilot's 81 blocked events were defects a stage could have found itself, for free. |
+| `pipeline amend-boundary <path> --reason` | The change needs a file the approved plan did not foresee. Appends one audited line to `## Amendments` (the approved sections stay frozen) and the boundary check honors it. `no_touch` is still refused. The boundary was **816 of 887** recorded block reasons. |
+| `pipeline round` / `pipeline finding` | The round ledger above. `--missed-by` names the probe the store owes. |
+| `pipeline permissions [--merge]` | Host allow-rules derived from the repo's own verified commands. Emit-only unless asked. |
 
 Piloting it? See **[PILOT.md](PILOT.md)** for the run-one-ticket playbook and
 how to read the metrics.
@@ -213,6 +239,8 @@ commands:                 # capability slots — every value verified by running
   test_targeted: "<test command> {targeted_specs}"
   post_change_hooks:
     - { when: "generated/**", run: "<regen command>" }
+  env_checks:             # can this CHECKOUT run the repo at all? (pipeline doctor --env)
+    - { name: "built assets present", run: "<cheap check>", fix: "<the repairing command>" }
 test_layout: { "src/**": "tests/" }   # changed file → its tests
 test_file_pattern: "(_test|_spec|\\.test|\\.spec)\\.[^./]+$"  # optional — what counts as a runnable test file (default shown); helpers/factories under test dirs never run
 conventions: { base_branch: master, branch_pattern: "T-<id>" }
@@ -228,3 +256,14 @@ at every gate (honesty ledger) — degrade gracefully, never fail on a missing a
 npm test          # full suite incl. the no-AI end-to-end fake run
 npm run build     # bundle dist/pipeline + dist/guard
 ```
+
+CI (`.github/workflows/ci.yml`) runs the suite on Node 20 and 22, builds the
+bundle, and runs it with `node_modules` deleted — the shape every installed copy
+actually takes.
+
+**Before adding another validator, pilot the ones already here.** The evidence
+gates (`evidence_verified`, `ac_proofs`, `ac_population`) are the newest and the
+strongest idea in the repo, and they have run on 3 of 29 recorded runs — they
+have no field data yet. Give them five real runs and report what they caught
+against what they false-blocked. A gate added on top of an unmeasured gate is
+how a pipeline accumulates friction it can never justify removing.

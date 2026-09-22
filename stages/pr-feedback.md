@@ -18,6 +18,10 @@ gates). This artifact records the round so feedback never reads as a clean run.
 template in `templates/`. Required sections: Comments, Replies, Outcome.
 
 ## Procedure — verify, then classify; never assume the reviewer is right
+- **Open the round first**: `pipeline round open pr --ref <PR>`. This batch of
+  comments IS the number the whole pipeline is trying to drive to ≤2, and until
+  the ledger existed it was the one number nobody recorded — runs that took two
+  reviewer rounds still reported a median of 0 corrections.
 - Read every unresolved thread. Check each claim against the actual code and
   diff before classifying — reviewers misread diffs too.
 - Classify each comment with evidence:
@@ -30,6 +34,14 @@ template in `templates/`. Required sections: Comments, Replies, Outcome.
   - **disputed** — you believe the reviewer is mistaken: draft the
     counter-argument with evidence; the developer arbitrates.
 - Fill `## Comments` as a table, one row per thread, with the proposed action.
+- **Record every comment as a finding**, whatever its class:
+  `pipeline finding --class <coupling|population|proof|correctness|style|scope|other>
+  --missed-by <probe name | none> --summary "<one line>" [--accepted|--rejected]`.
+  Answer `missed_by` honestly and specifically: it names the search that would
+  have surfaced this before the PR existed, and SCRIBE is required to leave the
+  repo with a probe of that name. This is the entire mechanism by which a
+  reviewer's finding stops being free knowledge for the reviewer alone. Close
+  the round (`pipeline round close`) once the developer has decided every row.
 
 ## Rework rigor — the rule this procedure exists to enforce
 Measured on two pilot PRs: 23 reviewer findings, **12 of them on code written to

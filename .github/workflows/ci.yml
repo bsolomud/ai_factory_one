@@ -1,0 +1,55 @@
+# CI for the pipeline itself.
+#
+# The verification suite has always existed and has always run only on the
+# machine of whoever happened to remember. A pipeline whose entire thesis is
+# "the model can claim anything; the FSM only believes exit codes" should not
+# ask that of its own repository — so the exit codes are collected here, on
+# every push and every pull request.
+#
+# Three things are proved: the suite is green, the self-contained bundle
+# actually builds, and the bundle runs with node_modules deleted — which is the
+# shape every installed copy takes, and the only shape a local `npm test` never
+# exercises.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Current LTS and current. (The esbuild bundle targets node18 syntax;
+        # that is a syntax floor, not a runtime anyone still installs on.)
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The installed shape: no node_modules, no package resolution. If the
+      # bundle needs something that was not baked in, it fails here rather than
+      # on a developer's first `/pipeline status`.
+      - name: bundled CLI runs without node_modules
+        run: |
+          rm -rf node_modules
+          node dist/pipeline repos
+          node dist/pipeline status

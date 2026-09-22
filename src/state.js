@@ -12,6 +12,22 @@ const STAGE_STATUSES = ['in_progress', 'awaiting_gate', 'complete']
 // would be a permanently misclassified event no writer-side fix can repair.
 export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'declared_na', 'other']
 
+// The round ledger's vocabulary — the same reason SKIP_KINDS lives here: these
+// strings are frozen into events.jsonl, and metrics buckets by them.
+//
+// A ROUND is one pass of feedback over the shipped change. The pilot target
+// ("close any task in ≤2 rounds") is about the rounds that arrive from OUTSIDE
+// the run — a reviewer on the PR, a red CI — and until this ledger existed the
+// metrics counted only in-run corrections, so a run with two PR rounds still
+// reported human_rounds: 0. You cannot drive to ≤2 a number nobody records.
+export const ROUND_SOURCES = ['pre-pr', 'pr', 'ci']
+
+// What a finding was ABOUT, which is the same question as "which probe would
+// have caught it". `missed_by` names that probe (or 'none' when nothing
+// reasonably could) — that pairing is what turns a round into a probe the next
+// run runs, instead of a lesson nobody can act on.
+export const FINDING_CLASSES = ['coupling', 'population', 'proof', 'correctness', 'style', 'scope', 'other']
+
 export function newState({ runId, repo, stage, base, branch, baselineUntracked, worktree }) {
   return {
     schema_version: 1,

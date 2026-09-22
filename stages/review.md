@@ -40,8 +40,25 @@ finding — usually about legibility, often about the code.
   passes: logic/correctness, security, performance,
   style-consistency-with-surrounding-code. Verification-before-flagging: a
   finding without checked evidence is noise — drop it.
-- **Re-verify `## Coupling`** against the shipped code with the **change-probes**
-  skill (`~/.claude/skills/change-probes/SKILL.md`; record
+- **Record the round and every finding in it.** Open it before reviewing —
+  `pipeline round open pre-pr` — and record each confirmed finding as
+  `pipeline finding --class <coupling|population|proof|correctness|style|scope|other>
+  --missed-by <probe name | none> --summary "<one line>"`, then
+  `pipeline round close`. `missed_by` is the load-bearing field: it names the
+  search that WOULD have surfaced this before the code existed, and SCRIBE turns
+  every such name into a probe the next run runs for free. `none` is a legitimate
+  answer and means exactly what it says — nothing reasonable would have caught it.
+  Without this ledger a review is a report; with it, it is the input to the only
+  mechanism that lowers the round count.
+- **A review with zero blocking findings must say what it checked.** Across 26
+  pilot reviews the declared blocking count was zero every single time while
+  external reviewers were still opening rounds — which makes a zero unreadable:
+  it cannot be told apart from a review that looked in the wrong place. So when
+  `## Findings` is clean, `## Blind pass` states the specific things you verified
+  and found sound, not that you found nothing.
+- **Re-verify `## Coupling`** against the shipped code with the repo's learned
+  probes (`pipeline probes` — it matches them to this diff) and the
+  **change-probes** skill (`~/.claude/skills/change-probes/SKILL.md`; record
   `pipeline used skill change-probes`): carry the plan's rows
   forward, re-run each command (`evidence_verified` re-runs them at the gate
   too), and ADD a row for every symbol the implementation or the fix loop newly
@@ -86,6 +103,7 @@ Fill the BLUF header at the top (Outcome APPROVE/CHANGES, Blocking count, TL;DR,
 Needs you) reflecting the latest round, and set the frontmatter counts —
 `findings: { blocking, advisory, fixed, disputed }` — to match `## Findings`
 (machine-read: the gate blocks while `blocking > 0`; metrics track review
-effectiveness from these). Artifact complete, fixes applied,
-checks green via `pipeline advance`;
+effectiveness from these). The round is closed and every finding recorded.
+Artifact complete, fixes applied, `pipeline check` green, then
+`pipeline advance`;
 present findings summary and STOP.

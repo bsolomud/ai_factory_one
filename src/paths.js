@@ -21,6 +21,21 @@ export function asset(...parts) {
   return existsSync(installed) ? installed : path.join(packageRoot(), ...parts)
 }
 
+// The host's skills directory. Host-specific by nature, so it is resolved, not
+// assumed: tests and sandboxes override it, and nothing depends on it existing.
+export function hostSkillsDir() {
+  return path.join(process.env.CLAUDE_HOME || path.join(os.homedir(), '.claude'), 'skills')
+}
+
+// Where the harvest procedure is written down. Installed as a host skill; the
+// package copy is the fallback so the path in an abort message always names a
+// file someone can open.
+export function harvestRunbook() {
+  const installed = path.join(hostSkillsDir(), 'knowledge-harvest', 'SKILL.md')
+  if (existsSync(installed)) return installed
+  return path.join(packageRoot(), 'adapters', 'claude-code', 'skills', 'knowledge-harvest', 'SKILL.md')
+}
+
 export function gitRoot(cwd) {
   try {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()

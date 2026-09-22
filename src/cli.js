@@ -1,14 +1,16 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
-import { currentBranch, loadProfile, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
+import { changedFiles, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
-import { parseArtifact, pathsInSection, sections } from './artifacts.js'
+import { boundaryAmendments, parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
-import { appendEvent, newState, readEvents, readState, writeState } from './state.js'
+import { appendEvent, FINDING_CLASSES, newState, readEvents, readState, ROUND_SOURCES, writeState } from './state.js'
 import { runValidators } from './validators.js'
+import { couplingRow, matchingProbes, probeIssues, readProbes } from './probes.js'
 import { checkoutBranch, createWorktree, deleteBranch, mainWorktreeDir, removeWorktree } from './worktree.js'
 import * as paths from './paths.js'
 
@@ -221,8 +223,29 @@ const commands = {
     }
     // --base declares a run STACKED on an open feature branch, so "this change" is
     // the diff from that branch and not from the trunk (see 'set-base' for why the
-    // wrong base poisons every validator). Default stays the profile's convention.
-    const base = flags.base || ctx.profile?.conventions?.base_branch || 'master'
+    // wrong base poisons every validator). An explicit flag always wins; otherwise
+    // the stacked case is DETECTED rather than left to the developer to remember —
+    // it was recorded as a knowledge fact and recurred anyway.
+    const profileBase = ctx.profile?.conventions?.base_branch || 'master'
+    let base = flags.base || profileBase
+    let baseNote = null
+    if (!flags.base) {
+      const detected = detectBase(ctx.repoDir, profileBase)
+      // A branch some OTHER active run already works on is a stale checkout, not
+      // a stack: basing on it would diff this run against that run's work.
+      const claimedByAnother = detected.autodetected && detected.branch && listRuns(ctx.slug).some(r => {
+        try {
+          const s = readState(paths.runDir(ctx.slug, r.id))
+          return s.stage !== 'DONE' && s.git?.branch === detected.branch
+        } catch { return false }
+      })
+      if (detected.autodetected && claimedByAnother) {
+        baseNote = `HEAD is on '${detected.branch}', which run(s) already in flight are working on — NOT treating this as a stacked run. Base stays '${profileBase}'; if this run really does stack on that work, say so with 'pipeline set-base ${detected.branch}'.`
+      } else if (detected.autodetected) {
+        base = detected.base
+        baseNote = detected.reason
+      }
+    }
     // Opt-in isolated working tree, so several runs can code in parallel without
     // sharing a checkout. Created BEFORE anything else — a failure creates no run.
     // Detached at base; the run's branch is created at BREAKDOWN inside this tree.
@@ -248,6 +271,7 @@ const commands = {
     // The full file list (not just a count) so a rebuilt state.json restores the
     // ambient baseline — otherwise a crash would re-flag the developer's scratch.
     appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked })
+    if (baseNote && base !== profileBase) appendEvent(runDir, { event: 'base_autodetected', base, from: profileBase, reason: baseNote })
     if (worktree) appendEvent(runDir, { event: 'worktree_created', path: worktree, base })
     // worktree_setup is surfaced, never executed: deps install can be slow,
     // credentialed, or interactive — the dispatcher/developer runs it.
@@ -258,9 +282,62 @@ const commands = {
       stage: state.stage,
       stage_prompt: paths.asset(config.stages[state.stage].prompt),
       run_dir: runDir,
+      base,
+      ...(baseNote && { base_note: baseNote }),
       ...(worktree && { worktree }),
       ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' })
     })
+  },
+
+  // The dry run. Same validators, same code path, ZERO consequences: no state
+  // write, no `blocked` event, no transition. It exists because `advance` was
+  // the only way to ask "would this pass?", and asking cost a full agent
+  // round-trip plus a blocked event that dents first_pass_green_rate. Measured
+  // across the pilot: 67 of 81 BLOCKED events were at PLAN or IMPLEMENT — stages
+  // whose agent could have found the same failure itself, for free, before
+  // declaring the artifact done.
+  //
+  // `artifact_complete` is reported apart from the rest: the runbooks mandate
+  // `status: complete` as the LAST edit, so a draft artifact failing that check
+  // is the expected state mid-work, not a defect. Folding it in with real
+  // failures would train agents to read a red `check` as noise.
+  check(_, flags) {
+    const { ctx, config, runDir, state } = loadRun(flags)
+    const stageName = flags.stage || state.stage
+    if (stageName === 'DONE') return emit({ verdict: 'GREEN', stage: 'DONE', note: 'this run is complete — nothing left to check' })
+    const stageDef = config.stages[stageName]
+    if (!stageDef) {
+      return emit({ verdict: 'ERROR', error: `unknown stage '${stageName}' — one of: ${config.order.join(', ')}` }, 1)
+    }
+    const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
+    const finalization = []
+    const blocking = []
+    for (const c of result.checks) {
+      if (c.status !== 'fail') continue
+      ;(c.name === 'artifact_complete' ? finalization : blocking).push(...c.reasons)
+    }
+    const surfaced = result.unverified.filter(u => u.kind !== 'not_configured' && u.kind !== 'declared_na')
+    return emit({
+      verdict: blocking.length ? 'RED' : 'GREEN',
+      stage: stageName,
+      dry_run: true,
+      // `target` only when it names one thing (a profile slot, a section); the
+      // `sections` validator's param is the whole required list and belongs in
+      // the reason, not in a label the agent scans.
+      checks: result.checks.map(c => ({
+        check: c.name,
+        ...(c.param != null && !Array.isArray(c.param) && { target: c.param }),
+        status: c.status
+      })),
+      blocking,
+      pending_finalization: finalization,
+      unverified: surfaced.map(u => u.text),
+      next_action: blocking.length
+        ? `${blocking.length} check(s) would BLOCK 'pipeline advance' — fix them here, then re-run 'pipeline check'. Nothing was recorded; this is a dry run.`
+        : finalization.length
+          ? `every substantive check passes; only the finalization stamp is missing — set 'status: complete' in the artifact frontmatter as your LAST edit, then run 'pipeline advance'`
+          : `all checks green — run 'pipeline advance'`
+    }, blocking.length ? 1 : 0)
   },
 
   advance(_, flags) {
@@ -410,6 +487,54 @@ const commands = {
     })
   },
 
+  // Widen the approved plan's write boundary, on the record. The boundary check
+  // is by far the loudest thing in the pilot log — 816 of 887 recorded block
+  // reasons — and a large share of those were legitimate: the change really did
+  // need a file the plan had not foreseen. The only sanctioned move was to
+  // hand-edit the approved plan, which the runbooks forbid ("the approved plan
+  // is FROZEN — later changes are appended amendments, never rewrites"), so the
+  // gate and the process disagreed and the gate won by blocking repeatedly.
+  //
+  // This appends an amendment instead: the approved sections stay untouched, the
+  // widening is one audited line the developer sees at the next gate, and
+  // `git_clean_within` reads the union. A `no_touch` path is still refused —
+  // that rule is the developer's, not the plan's, and no amendment overrides it.
+  'amend-boundary'(positional, flags) {
+    const { ctx, config, runDir, state } = loadRun(flags)
+    const wanted = positional.filter(Boolean)
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : ''
+    if (!wanted.length || !reason) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline amend-boundary <path> [<path>…] --reason "<why this change needs the file>" — the reason lands in the plan and the audit log` }, 1)
+    }
+    const planRel = artifactFor(config, '-plan.md')
+    if (!planRel) return emit({ verdict: 'ERROR', error: `no stage in pipeline.yml outputs a '-plan.md' artifact — there is no boundary to amend` }, 1)
+    const planAbs = path.join(runDir, planRel)
+    const plan = parseArtifact(planAbs)
+    if (!plan) return emit({ verdict: 'ERROR', error: `plan artifact ${planRel} does not exist yet — the plan stage must produce it first` }, 1)
+    if (state.stage === 'PLAN') {
+      return emit({ verdict: 'ERROR', error: `the plan is still being written — add the path to '## Affected files' directly. Amendments exist for AFTER approval, when the approved sections are frozen.` }, 1)
+    }
+    const blocked = wanted.filter(p => matchesAny(p, ctx.profile?.no_touch || []))
+    if (blocked.length) {
+      return emit({ verdict: 'BLOCKED', reasons: [`${blocked.join(', ')} match a no_touch rule in this repo's profile — an amendment cannot override it. The pipeline must never modify these; if the change genuinely requires it, the developer edits them by hand.`] }, 1)
+    }
+    const declared = new Set(pathsInSection(sections(plan.body)['Affected files'] ?? '').map(p => p.path))
+    const already = new Set(boundaryAmendments(plan.body))
+    const fresh = wanted.filter(p => !declared.has(p) && !already.has(p))
+    if (!fresh.length) {
+      return emit({ verdict: 'OK', added: [], note: `already inside the boundary — nothing to amend. Re-run 'pipeline advance'.` })
+    }
+    const line = `- boundary: ${fresh.map(p => `\`${p}\``).join(', ')} — ${reason} (${state.stage}, ${new Date().toISOString().slice(0, 10)})`
+    appendToSection(planAbs, 'Amendments', line)
+    appendEvent(runDir, { event: 'boundary_amended', stage: state.stage, paths: fresh, reason })
+    return emit({
+      verdict: 'OK',
+      added: fresh,
+      artifact: planRel,
+      note: `boundary widened by ${fresh.length} path(s); recorded in the plan's '## Amendments' and the audit log. Re-run 'pipeline advance'. Surface this to the developer at the gate — they approved a plan that did not include these files.`
+    })
+  },
+
   'set-autonomy'(positional, flags) {
     const { runDir, state } = loadRun(flags)
     const mode = positional[0] || flags.mode
@@ -468,14 +593,76 @@ const commands = {
     if (!ctx.profile) {
       return emit({ verdict: 'NO_PROFILE', repo: ctx.slug, next_action: 'run onboarding first: pipeline onboard' }, 1)
     }
+    // --env checks the WORKING TREE, not the profile: a tree can be perfectly
+    // configured and still unable to run a test. Four of the pilot's 28 recorded
+    // developer notes are the same shape — assets not built, a gitignored config
+    // absent, a database not loaded — each discovered by a red gate deep inside a
+    // stage, where it reads as a failing change rather than an unprepared tree.
+    if (flags.env) return envReport(ctx, flags)
     const { errors, warnings } = validateProfile(ctx.profile)
     return emit({
       verdict: errors.length ? 'INVALID' : 'OK',
       repo: ctx.slug,
       profile_path: paths.profilePath(ctx.slug),
       errors,
-      warnings
+      warnings,
+      note: `profile schema only — run 'pipeline doctor --env' to check that the working tree can actually run this repo's commands`
     }, errors.length ? 1 : 0)
+  },
+
+  // Host permission rules derived from the repo's OWN verified commands, so a
+  // run stops prompting for every `bundle exec …` it was always going to run.
+  // Emit-only by default: these rules widen what the assistant may do without
+  // asking, and that is the developer's call, not a side effect of onboarding.
+  permissions(_, flags) {
+    const ctx = resolveRepo(flags, { requireProfile: true })
+    const rules = new Set()
+    const from = []
+    for (const slot of Object.keys(ctx.profile?.commands || {})) {
+      for (const entry of resolveSlot(ctx.profile, slot)) {
+        const prefix = commandPrefix(entry.run)
+        if (!prefix) continue
+        rules.add(`Bash(${prefix}:*)`)
+        from.push({ slot, prefix })
+      }
+    }
+    const list = [...rules].sort()
+    if (!flags.merge) {
+      return emit({
+        verdict: 'OK',
+        repo: ctx.slug,
+        permissions: list,
+        derived_from: from,
+        note: `${list.length} rule(s) derived from this repo's verified commands. Show them to the developer; 'pipeline permissions --merge' adds the ones they approve to ${path.join(process.env.CLAUDE_HOME || path.join(os.homedir(), '.claude'), 'settings.json')}. Nothing was written.`
+      })
+    }
+    const settingsFile = path.join(process.env.CLAUDE_HOME || path.join(os.homedir(), '.claude'), 'settings.json')
+    let settings = {}
+    if (fs.existsSync(settingsFile)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+      } catch (e) {
+        return emit({ verdict: 'ERROR', error: `${settingsFile} is not valid JSON (${e.message}) — fix it before merging permissions into it` }, 1)
+      }
+    }
+    settings.permissions ??= {}
+    const existing = Array.isArray(settings.permissions.allow) ? settings.permissions.allow : []
+    const added = list.filter(r => !existing.includes(r))
+    if (added.length) {
+      settings.permissions.allow = [...existing, ...added]
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true })
+      const tmp = `${settingsFile}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n')
+      fs.renameSync(tmp, settingsFile)
+    }
+    return emit({
+      verdict: 'OK',
+      repo: ctx.slug,
+      settings_file: settingsFile,
+      added,
+      already_present: list.length - added.length,
+      note: added.length ? `${added.length} rule(s) added` : 'every derived rule was already allowed — nothing changed'
+    })
   },
 
   show(_, flags) {
@@ -498,19 +685,185 @@ const commands = {
     })
   },
 
+  // Abort is where the learning loop went to die. Measured across the pilot:
+  // 18 of 29 runs were aborted and 15 of those at CI, because the CI runbook
+  // required a MERGE — an event that happens hours later and outside the
+  // session — before SCRIBE could run. So the one stage whose whole job is to
+  // write knowledge executed on 6 of 29 runs, and every abort silently threw
+  // away a run's worth of learnings that are sitting right there in events.jsonl.
+  //
+  // Aborting still ends the run immediately (nothing is blocked on a harvest),
+  // but it now DEMANDS the harvest rather than forgetting it: the verdict names
+  // the runbook, the event records that a harvest is owed, and skipping is an
+  // explicit, reasoned choice instead of the default.
   abort(_, flags) {
     const { runDir, state } = loadRun(flags)
     if (state.stage === 'DONE') return emit({ verdict: 'OK', note: 'run already finished' })
-    appendEvent(runDir, { event: 'run_aborted', from: state.stage })
+    const from = state.stage
+    appendEvent(runDir, { event: 'run_aborted', from })
     state.aborted = true
     state.stage = 'DONE'
     state.stage_status = 'complete'
     writeState(runDir, state)
+    const skipReason = typeof flags['no-harvest'] === 'string' ? flags['no-harvest'].trim() : ''
+    const skipped = !!flags['no-harvest']
+    appendEvent(runDir, skipped
+      ? { event: 'harvest_skipped', from, reason: skipReason }
+      : { event: 'harvest_pending', from })
     return emit({
       verdict: 'ABORTED',
       run: state.run_id,
+      aborted_at: from,
+      harvest: skipped ? 'skipped' : 'required',
+      ...(skipped ? {} : { harvest_runbook: paths.harvestRunbook() }),
       note: `run marked aborted at ${runDir}. Its git branch (if any) was left untouched — remove it manually if unwanted.`
-        + (state.git?.worktree ? ` Its worktree at ${state.git.worktree} was kept — clean up with 'pipeline worktree remove --run ${state.run_id}'.` : '')
+        + (state.git?.worktree ? ` Its worktree at ${state.git.worktree} was kept — clean up with 'pipeline worktree remove --run ${state.run_id}'.` : ''),
+      next_action: skipped
+        ? `harvest skipped on the developer's instruction ("${skipReason || 'no reason given'}") — recorded. This run's learnings stay unread.`
+        : `HARVEST THIS RUN before moving on: spawn the harvest agent on ${paths.harvestRunbook()} for run ${state.run_id}. An aborted run still carries everything the next run needs — blocked reasons, gate notes, review findings — and this is the only moment anyone will look at them.`
+    })
+  },
+
+  // Rounds: the ledger the pilot target is actually about. `human_rounds` only
+  // ever saw corrections INSIDE the run, so a run that took two reviewer rounds
+  // on its PR still reported a median of 0 — the number the whole pipeline is
+  // trying to drive down was the one number nobody recorded. A round is opened
+  // when feedback arrives (pre-PR review, PR comments, red CI) and closed when
+  // it has been worked; the findings inside it are recorded with `finding`.
+  round(positional, flags) {
+    const { runDir, state } = loadRun(flags)
+    const action = positional[0]
+    const events = readEvents(runDir)
+    const open = openRound(events)
+    if (action === 'open') {
+      const source = positional[1] || flags.source
+      if (!ROUND_SOURCES.includes(source)) {
+        return emit({ verdict: 'ERROR', error: `usage: pipeline round open <${ROUND_SOURCES.join('|')}> [--ref <pr/url>] [--note "<gist>"]` }, 1)
+      }
+      if (open) {
+        return emit({ verdict: 'ERROR', error: `round ${open.n} (${open.source}) is still open — close it first ('pipeline round close') so the ledger says when each round of feedback ended` }, 1)
+      }
+      const n = events.filter(e => e.event === 'round_opened').length + 1
+      appendEvent(runDir, { event: 'round_opened', n, source, stage: state.stage, ref: flags.ref || null, note: flags.note || '' })
+      return emit({
+        verdict: 'OK',
+        round: n,
+        source,
+        next_action: `round ${n} open — record each finding it brought with 'pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe-or-none> --summary "<one line>"', then 'pipeline round close'`
+      })
+    }
+    if (action === 'close') {
+      if (!open) return emit({ verdict: 'ERROR', error: `no round is open — 'pipeline round open <${ROUND_SOURCES.join('|')}>' starts one` }, 1)
+      const findings = events.filter(e => e.event === 'finding_recorded' && e.round === open.n).length
+      appendEvent(runDir, { event: 'round_closed', n: open.n, source: open.source, findings, note: flags.note || '' })
+      return emit({ verdict: 'OK', round: open.n, source: open.source, findings, note: `round ${open.n} closed with ${findings} recorded finding(s)` })
+    }
+    if (action === 'list' || !action) {
+      const rounds = events.filter(e => e.event === 'round_opened').map(e => ({
+        n: e.n,
+        source: e.source,
+        ref: e.ref,
+        closed: events.some(c => c.event === 'round_closed' && c.n === e.n),
+        findings: events.filter(f => f.event === 'finding_recorded' && f.round === e.n).length
+      }))
+      return emit({ verdict: 'OK', rounds, open: open?.n ?? null })
+    }
+    return emit({ verdict: 'ERROR', error: `usage: pipeline round <open <source> | close | list>` }, 1)
+  },
+
+  // One finding, classified by what it was ABOUT and by which probe would have
+  // caught it. `missed_by` is the load-bearing field: a finding whose answer is
+  // a named probe tells SCRIBE exactly what to accrete, and a finding whose
+  // answer is 'none' is the honest admission that nothing reasonable would have.
+  finding(positional, flags) {
+    const { runDir, state } = loadRun(flags)
+    const cls = flags.class
+    const summary = (positional.join(' ').trim() || flags.summary || '').trim()
+    const missedBy = typeof flags['missed-by'] === 'string' ? flags['missed-by'].trim() : ''
+    if (!FINDING_CLASSES.includes(cls) || !summary || !missedBy) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe name | none> --summary "<one line>" [--source <${ROUND_SOURCES.join('|')}>] [--accepted|--rejected]` }, 1)
+    }
+    const events = readEvents(runDir)
+    const open = openRound(events)
+    const source = flags.source || open?.source || 'pre-pr'
+    if (!ROUND_SOURCES.includes(source)) {
+      return emit({ verdict: 'ERROR', error: `--source must be one of: ${ROUND_SOURCES.join(', ')}` }, 1)
+    }
+    const verdict = flags.rejected ? 'rejected' : flags.accepted ? 'accepted' : 'recorded'
+    appendEvent(runDir, {
+      event: 'finding_recorded',
+      round: open?.n ?? null,
+      source,
+      stage: state.stage,
+      class: cls,
+      missed_by: missedBy,
+      disposition: verdict,
+      summary
+    })
+    return emit({
+      verdict: 'OK',
+      recorded: { class: cls, missed_by: missedBy, source, disposition: verdict },
+      next_action: missedBy.toLowerCase() === 'none'
+        ? `recorded. 'none' means no probe would reasonably have caught this — SCRIBE will read that as a genuine limit, not as a gap.`
+        : `recorded. SCRIBE must leave this run with a probe named '${missedBy}' in the repo's knowledge store — that is how this finding stops costing a round.`
+    })
+  },
+
+  // The probes this repo has LEARNED, matched to what the current change
+  // touches. PLAN and REVIEW start '## Coupling' from this list, so a finding
+  // that cost a round once becomes a command the next run runs for free.
+  probes(positional, flags) {
+    const ctx = resolveRepo(flags, { requireProfile: true })
+    const facts = readProbes(paths.knowledgeDir(ctx.slug))
+    const issues = probeIssues(facts)
+    if (flags.lint) {
+      return emit({
+        verdict: issues.length ? 'GAPS' : 'OK',
+        repo: ctx.slug,
+        facts: facts.length,
+        with_probe: facts.filter(f => f.has_probe).length,
+        issues,
+        note: issues.length
+          ? `${issues.length} fact(s) cannot be applied by a future run. A knowledge fact without a runnable probe is a story; the plan's '## Coupling' table can cite only a command.`
+          : 'every knowledge fact carries a runnable probe'
+      })
+    }
+    const all = facts.flatMap(f => f.probes)
+    if (flags.all) {
+      return emit({ verdict: 'OK', repo: ctx.slug, probes: all, rows: all.filter(p => p.tier === 'coupling').map(couplingRow) })
+    }
+    // Default: scope to what this change actually touches.
+    let files = positional.filter(Boolean)
+    let scope = 'the paths you passed'
+    if (!files.length) {
+      const runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)
+      if (!runId) {
+        return emit({ verdict: 'ERROR', error: `no active run to take a diff from — pass paths ('pipeline probes app/x.rb'), or --all for every probe, or --lint to audit the store` }, 1)
+      }
+      const state = readState(paths.runDir(ctx.slug, runId))
+      const repoDir = state.git?.worktree && fs.existsSync(state.git.worktree) ? state.git.worktree : ctx.repoDir
+      files = changedFiles(repoDir, state.git?.base || 'master', { includeUntracked: true })
+      scope = `run ${runId}'s diff vs ${state.git?.base}`
+    }
+    const matched = matchingProbes(facts, files)
+    const coupling = matched.filter(p => p.tier === 'coupling')
+    const inspect = matched.filter(p => p.tier === 'inspect')
+    return emit({
+      verdict: 'OK',
+      repo: ctx.slug,
+      scope,
+      changed_files: files.length,
+      probes: matched,
+      // Searches whose hit count belongs in '## Coupling' (the gate re-runs them)…
+      coupling_rows: coupling.map(couplingRow),
+      // …and inspections that answer a question without producing a row.
+      inspect: inspect.map(p => ({ fact: p.fact, run: p.run, asks: p.asks })),
+      ...(issues.length && { store_gaps: issues.length }),
+      note: matched.length
+        ? `${coupling.length} coupling probe(s) to run and record in '## Coupling', ${inspect.length} inspection(s) to answer. These are checks that cost this repo a review round before.`
+        : facts.length
+          ? `no learned probe matches these paths — fall back to the generic probe list (the change-probes skill). If this change later takes a review round, that round names the probe this store is missing.`
+          : `this repo has no knowledge store yet — SCRIBE writes it at the end of a run.`
     })
   },
 
@@ -827,6 +1180,29 @@ function resetArtifactStatus(file) {
   return true
 }
 
+// Append a line at the END of a named `## Section`, creating the section at the
+// end of the file if it is absent. Surgical on purpose: the artifact is the
+// developer's approved document and everything outside the target section —
+// including the template's guidance comments — must survive untouched.
+function appendToSection(file, sectionName, line) {
+  const raw = fs.readFileSync(file, 'utf8')
+  const lines = raw.split('\n')
+  const isHeading = l => l.trimStart().startsWith('## ')
+  const headIdx = lines.findIndex(l => isHeading(l) && l.trim().slice(3).trim() === sectionName)
+  if (headIdx === -1) {
+    fs.writeFileSync(file, `${raw}${raw.endsWith('\n') ? '' : '\n'}\n## ${sectionName}\n\n${line}\n`)
+    return
+  }
+  let end = lines.length
+  for (let i = headIdx + 1; i < lines.length; i++) {
+    if (isHeading(lines[i])) { end = i; break }
+  }
+  let insert = end
+  while (insert > headIdx + 1 && lines[insert - 1].trim() === '') insert--
+  lines.splice(insert, 0, line)
+  fs.writeFileSync(file, lines.join('\n'))
+}
+
 function transition(runDir, config, state, { by }) {
   const next = config.stages[state.stage].next
   appendEvent(runDir, { event: 'advanced', from: state.stage, to: next, by })
@@ -918,6 +1294,88 @@ function listRuns(slug) {
     .map(id => {
       try { return { id, stage: readState(path.join(dir, id)).stage } } catch { return { id, stage: 'NEEDS_RECONCILE' } }
     })
+}
+
+// Is this working tree able to run this repo's commands at all? Distinct from
+// `doctor` (which reads the profile) and from a stage gate (which reads the
+// change): an unprepared tree fails a gate in the language of a broken change,
+// and the pilot log shows that costing whole stages to diagnose. The checks
+// themselves are a capability slot — `commands.env_checks`, each entry
+// optionally carrying `name` and `fix` — so nothing here knows any toolchain.
+function envReport(ctx, flags) {
+  let workdir = ctx.repoDir
+  let runId = null
+  try {
+    runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)
+    if (runId) {
+      const st = readState(paths.runDir(ctx.slug, runId))
+      if (st.git?.worktree && fs.existsSync(st.git.worktree)) workdir = st.git.worktree
+    }
+  } catch { /* no run, or unreadable state — then we check the checkout we are in */ }
+
+  const entries = resolveSlot(ctx.profile, 'env_checks')
+  const setup = resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run)
+  const freshTree = paths.isLinkedWorktree(workdir)
+  if (entries.length === 0) {
+    return emit({
+      verdict: 'UNCONFIGURED',
+      repo: ctx.slug,
+      workdir,
+      ...(setup.length && { worktree_setup: setup }),
+      next_action: `this repo has no 'commands.env_checks' — add them via '/pipeline onboard'. Each is a cheap command that proves the tree can actually run the repo (assets built, generated config present, database loaded), with an optional 'fix:' naming the command that repairs it. Without them, an unprepared tree first announces itself as a failing test deep inside a stage.`
+    })
+  }
+  const results = []
+  for (const entry of entries) {
+    const name = entry.name || commandPrefix(entry.run) || entry.run
+    try {
+      execSync(entry.run, { cwd: workdir, stdio: 'pipe', timeout: 300_000 })
+      results.push({ check: name, status: 'pass' })
+    } catch (e) {
+      const out = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim().split('\n').slice(-8).join('\n')
+      results.push({ check: name, status: 'fail', exit: e.status ?? null, output: out, fix: entry.fix || null })
+    }
+  }
+  const failed = results.filter(r => r.status === 'fail')
+  return emit({
+    verdict: failed.length ? 'ENV_GAPS' : 'OK',
+    repo: ctx.slug,
+    workdir,
+    ...(runId && { run: runId }),
+    fresh_worktree: freshTree,
+    checks: results,
+    ...(freshTree && setup.length && { worktree_setup: setup }),
+    next_action: failed.length
+      ? `${failed.length} environment check(s) failed — repair the TREE before reading any gate result as a verdict on the change. ${failed.map(f => f.fix ? `${f.check}: ${f.fix}` : `${f.check}: no fix recorded`).join(' · ')}`
+      : `the tree can run this repo's commands — a red gate from here is about the change, not the environment`
+  }, failed.length ? 1 : 0)
+}
+
+// The round currently taking findings, or null. Event-sourced like everything
+// else: the last `round_opened` without a matching `round_closed`.
+function openRound(events) {
+  let open = null
+  for (const e of events) {
+    if (e.event === 'round_opened') open = { n: e.n, source: e.source }
+    else if (e.event === 'round_closed' && open && e.n === open.n) open = null
+  }
+  return open
+}
+
+// A profile command reduced to the prefix a host permission rule can match:
+// leading VAR=VAL assignments dropped, then tokens taken until the first flag
+// or {placeholder}. `TZ=UTC yarn jest {targeted_specs}` → `yarn jest`.
+function commandPrefix(cmd) {
+  const tokens = String(cmd).trim().split(/\s+/)
+  const out = []
+  let i = 0
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+  for (; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t.startsWith('-') || t.includes('{') || t.includes('&&') || t.includes('|')) break
+    out.push(t)
+  }
+  return out.join(' ')
 }
 
 function onlyActiveRun(slug) {

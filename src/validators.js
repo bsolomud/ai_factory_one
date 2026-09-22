@@ -1,7 +1,7 @@
 import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, parseArtifact, sections, pathsInSection } from './artifacts.js'
+import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, boundaryAmendments, parseArtifact, sections, pathsInSection } from './artifacts.js'
 import { artifactFor } from './config.js'
 import { proofStamp } from './scan.js'
 import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
@@ -219,8 +219,11 @@ export const validators = {
     if (!planRel) return fail(`cannot enforce the write boundary: no stage in pipeline.yml outputs a '-plan.md' artifact`)
     const artifact = parseArtifact(artifactAbs(ctx, planRel))
     if (!artifact) return fail(`cannot enforce the write boundary: plan artifact not found — the plan stage must complete first`)
-    const affected = pathsInSection(sections(artifact.body)['Affected files'] ?? '').map(p => p.path)
-    if (affected.length === 0) return fail(`the plan's '## Affected files' section lists no paths — the write boundary cannot be derived`)
+    const declared = pathsInSection(sections(artifact.body)['Affected files'] ?? '').map(p => p.path)
+    if (declared.length === 0) return fail(`the plan's '## Affected files' section lists no paths — the write boundary cannot be derived`)
+    // The approved plan is frozen; a legitimate widening lands as an appended
+    // amendment (`pipeline amend-boundary`), so the boundary is the union.
+    const affected = [...new Set([...declared, ...boundaryAmendments(artifact.body)])]
     // Boundary enforcement DOES want untracked files: a run's brand-new file that
     // isn't committed yet is still an out-of-plan write we must catch.
     const files = ctxChangedFiles(ctx, { includeUntracked: true })
@@ -244,7 +247,7 @@ export const validators = {
         || allowedTests.includes(file)
         || testDirs.some(d => file.startsWith(d))
       if (!isAllowed) {
-        reasons.push(`working tree touches ${file}, which is outside the approved plan's '## Affected files' — revert it, or append a plan amendment and get it approved first`)
+        reasons.push(`working tree touches ${file}, which is outside the approved plan's '## Affected files' — revert it, or, if the change genuinely needs this file, widen the boundary on the record: 'pipeline amend-boundary ${file} --reason "<why this file is needed>"' (it appends to the plan's '## Amendments' and is audit-logged; the developer sees it at the gate)`)
       }
     }
     return reasons.length ? { ok: false, reasons } : ok()
@@ -506,10 +509,15 @@ export const validators = {
 // model fixes everything in one pass) and every skip (the honesty ledger).
 // Skips carry a machine `kind` (no_command | not_configured | no_target |
 // other) so metrics never have to classify by regexing the prose reason.
+// `checks` carries the per-validator verdict so a caller can tell WHICH
+// validator produced a reason. `advance` ignores it (a failure is a failure);
+// `check` (the dry run) needs it to separate real work from the
+// finalization-only stamp an in-progress artifact legitimately lacks.
 export function runValidators(ctx) {
   const spec = ctx.stageDef.validate || []
   const reasons = []
   const unverified = []
+  const checks = []
   for (const item of spec) {
     // A list item is either a bare validator name (- no_secrets) or a
     // name→param map (- profile_command: lint_changed). Only validators that
@@ -517,12 +525,24 @@ export function runValidators(ctx) {
     // accepted, so pipeline.yml can never carry decorative config.
     const [name, param] = typeof item === 'string' ? [item] : Object.entries(item)[0]
     const fn = validators[name]
-    if (!fn) { reasons.push(`pipeline.yml names unknown validator '${name}'`); continue }
+    if (!fn) {
+      const reason = `pipeline.yml names unknown validator '${name}'`
+      reasons.push(reason)
+      checks.push({ name, param, status: 'fail', reasons: [reason] })
+      continue
+    }
     const result = fn(ctx, param)
-    if (result.skip) unverified.push({ text: `${ctx.stageName}/${name}: ${result.reason}`, kind: result.kind || 'other' })
-    else if (!result.ok) reasons.push(...result.reasons)
+    if (result.skip) {
+      unverified.push({ text: `${ctx.stageName}/${name}: ${result.reason}`, kind: result.kind || 'other' })
+      checks.push({ name, param, status: 'skip', reasons: [result.reason] })
+    } else if (!result.ok) {
+      reasons.push(...result.reasons)
+      checks.push({ name, param, status: 'fail', reasons: result.reasons })
+    } else {
+      checks.push({ name, param, status: 'pass', reasons: [] })
+    }
   }
-  return { ok: reasons.length === 0, reasons, unverified }
+  return { ok: reasons.length === 0, reasons, unverified, checks }
 }
 
 // Kept deliberately literal-value shaped: an ENV lookup or interpolation never
@@ -608,6 +628,12 @@ function tokenizeCommand(cmd) {
   for (const m of cmd.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) tokens.push(m[1] ?? m[2] ?? m[3])
   return tokens
 }
+
+// Exported as the ONE definition of "a command this pipeline is willing to
+// re-run on the developer's behalf" — the Coupling gate re-runs it, and a
+// knowledge fact's probe is offered to the planner to run. Both must mean the
+// same thing, or a probe could be accreted that the gate then refuses.
+export const readOnlySearchArgv = cmd => evidenceArgv(cmd)
 
 function evidenceArgv(cmd) {
   // Operators are checked OUTSIDE quotes only: `git grep -n 'a|b'` is a regex,

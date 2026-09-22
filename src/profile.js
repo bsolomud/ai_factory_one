@@ -109,6 +109,45 @@ export function currentBranch(repoDir) {
   }
 }
 
+// Which commit "this change" is diffed from. The profile convention (usually
+// the trunk) is right for a run that starts on the trunk and catastrophic for a
+// run STACKED on an open feature branch: the diff then spans that whole branch,
+// so the boundary check emits a reason per foreign file, lint runs over hundreds
+// of them, and targeted tests balloon into a suite run. That defect was recorded
+// as a knowledge fact and RECURRED — `framework-proposals.md` calls it a second
+// strike — which is what moved the fix into code.
+//
+// Rule: if HEAD sits on a branch that is not the profile base and carries
+// commits the base does not, the run stacks on it. Detection only; the caller
+// decides (it also knows which branches other runs have claimed) and `set-base`
+// overrides at any time.
+export function detectBase(repoDir, profileBase) {
+  const keep = { base: profileBase, autodetected: false, reason: null, branch: null, ahead: 0 }
+  const branch = currentBranch(repoDir)
+  if (!branch || branch === profileBase) return keep
+  const resolves = ref => {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd: repoDir, stdio: 'pipe' })
+      return true
+    } catch { return false }
+  }
+  if (!resolves(profileBase)) {
+    return { base: branch, autodetected: true, branch, ahead: 0, reason: `the profile's base branch '${profileBase}' does not resolve in this checkout — using the checked-out branch '${branch}' as the run base` }
+  }
+  let ahead = 0
+  try {
+    ahead = parseInt(execFileSync('git', ['rev-list', '--count', `${profileBase}..HEAD`], { cwd: repoDir, encoding: 'utf8' }).trim(), 10)
+  } catch { return keep }
+  if (!Number.isInteger(ahead) || ahead === 0) return keep
+  return {
+    base: branch,
+    autodetected: true,
+    branch,
+    ahead,
+    reason: `HEAD is on '${branch}', ${ahead} commit(s) ahead of '${profileBase}' — this run stacks on it, so "this change" is diffed from '${branch}' and not from the trunk`
+  }
+}
+
 export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
   const out = new Set()
   const run = args => {

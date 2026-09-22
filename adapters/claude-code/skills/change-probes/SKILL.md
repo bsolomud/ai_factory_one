@@ -22,6 +22,21 @@ is how you discover there is no backfill.
 
 ---
 
+## Start with what this repo already learned
+
+Run `pipeline probes` FIRST. It returns the probes this repo accreted from its
+own review rounds — each one a search that cost a round once — matched to the
+files the current change touches, and pre-formatted as `## Coupling` rows. Those
+come before the generic six below, because they are the ones this codebase has
+actually been burned by.
+
+The six below are the fallback and the widener: they apply to any repo, and
+working them is how you find the coupling nobody has been burned by *yet*. When
+one of them earns a finding, SCRIBE turns it into a stored probe, and the next
+run gets it from `pipeline probes` for free.
+
+---
+
 ## The six probes
 
 Run the ones that apply. Each produces rows; a probe you skip is a claim you

@@ -72,6 +72,22 @@ worktree for parallel tickets; leave empty if the developer prefers to set
 worktrees up by hand. Prefill from detection (and from `existing_profile` when
 re-onboarding). Never ask about task-tracker access here.
 
+Also ask for `commands.env_checks` — the cheap commands that prove a checkout
+can actually RUN this repo, each optionally carrying `name:` and `fix:`:
+
+```yaml
+env_checks:
+  - { name: "built assets present", run: "<cheap existence/build check>", fix: "<the command that repairs it>" }
+```
+
+These answer a different question from `worktree_setup`, which says how to
+prepare a tree: `env_checks` says whether a tree is prepared *now*. Ask the
+developer what has bitten them in a fresh checkout — missing generated config, a
+database that was never loaded, build output that is gitignored. Every one of
+those first announces itself as a failing test deep inside a stage, where it
+reads as a broken change; `pipeline doctor --env` turns it into one line before
+any code is written. Leave empty if the developer has nothing to name.
+
 ### 4. Write the profile
 `profile.yml` at `profile_path`, with: `commands` slots (each command entry
 carries a `verified:` tier — `config` | `liveness` | `executed` — from step 1;
@@ -83,7 +99,17 @@ and `evidence_hashes` for the files detection relied on (`pipeline hash` again).
 Show the developer the full profile and wait for explicit confirmation —
 wrong bindings get fixed once here instead of poisoning every later stage.
 Then re-run `pipeline status` to prove the profile loads (and registers the
-repo for any-folder use).
+repo for any-folder use), and `pipeline doctor --env` to prove the checkout can
+run what the profile claims.
+
+### 6. Offer the permission rules the profile implies
+Run `pipeline permissions`. It derives one host allow-rule per verified command
+in the profile — the commands every run of this repo was always going to execute
+— and writes NOTHING. Show the list and ask whether to apply it: on an explicit
+yes, `pipeline permissions --merge`. The alternative is a prompt on every lint
+and test invocation for the life of the repo, which is how developers end up
+approving without reading. Widening what runs unattended is the developer's
+call, so it is asked once, here, with the exact rules on screen.
 
 ## Re-sync flow (PROFILE_STALE)
 

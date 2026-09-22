@@ -39,6 +39,11 @@ Risk-to-test map, Added tests, Deferred.
   The stamp hashes the plan's `## Affected files`, so the ledger EXPIRES the
   moment the code under test changes — which is what stops a later fix round
   from inheriting a proof its own change already invalidated.
+- **Self-certify with `pipeline check` before setting `status: complete`.** It
+  runs the gate's own validators — the criterion accounting, the proof ledger
+  and its staleness stamp, the profile checks — and records nothing. A stale
+  stamp or an unaccounted criterion found here costs one edit; found at
+  `advance` it costs a blocked event and a fresh dispatch.
 - If a profile check blocks for reasons you cannot map to the branch diff,
   follow the pipeline's **gate-triage** skill
   (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.

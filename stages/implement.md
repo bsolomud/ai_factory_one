@@ -18,23 +18,40 @@ starting over.
   for commits, one commit per subtask with a message referencing it is the
   convention; otherwise leave the work uncommitted — they review and commit
   themselves.
-- If it returns a **proposed plan amendment** (needed a file outside the
-  boundary, or a deviation beyond mechanical detail): do NOT proceed — append
-  the amendment to the plan's `## Amendments`, record it under
-  `## Deviations` in `03-progress.md`, and surface it at this gate for the
-  developer to approve.
+- **Check before you claim.** Run `pipeline check` when the subtask looks done:
+  same validators as the gate, nothing recorded, no round-trip. `advance` is for
+  certifying finished work, not for finding out what is wrong with it.
+- The subtask genuinely needs a file the approved plan never listed → do NOT
+  hand-edit the approved plan (it is frozen) and do NOT quietly work around the
+  boundary. Widen it on the record:
+  `pipeline amend-boundary <path> --reason "<why this change needs it>"`. That
+  appends one line to the plan's `## Amendments`, is audit-logged, and is
+  honored by the boundary check immediately. Then record it under
+  `## Deviations` in `03-progress.md` and **surface it at this gate** — the
+  developer approved a plan that did not include this file, and they get to see
+  that it grew. A `no_touch` path is refused outright; no amendment overrides it.
+- If the implementer returns a **deviation beyond mechanical detail** (a design
+  change, not just an extra file): do NOT proceed — append the amendment to the
+  plan's `## Amendments`, record it under `## Deviations`, and surface it at this
+  gate for the developer to approve.
 - Update `03-progress.md`: check the subtask off, note what was done (+ the
   commit reference, if one was made).
 - The profile is a floor, not a ceiling: also run anything else you judge
   relevant to this change. The developer must never see red.
+- **Before your FIRST change when this run has its own worktree**, run
+  `pipeline doctor --env`. A fresh tree that cannot build assets or find a
+  generated config fails a gate in the language of a broken change, and
+  diagnosing that from inside a stage has cost real runs whole sessions. Repair
+  the tree first (the report names the fix command per check); a red gate after
+  a green env report is about your diff.
 - If `advance` blocks on a profile check for reasons you cannot map to your
-  own diff — or before your FIRST change when this run has its own worktree —
-  follow the pipeline's **gate-triage** skill
+  own diff, follow the pipeline's **gate-triage** skill
   (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.
   Never hand-tune around an unclassified red.
 
 ## Done when
-The subtask's code is done and `03-progress.md` updated (keep the BLUF header's
+The subtask's code is done, `pipeline check` is green, and `03-progress.md`
+updated (keep the BLUF header's
 subtask count current); run `pipeline advance`
 (it re-runs the profile checks and the write-boundary check — its exit code is
 the certification, not your claim). On GATE: present the diff to the developer

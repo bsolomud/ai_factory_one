@@ -124,17 +124,63 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
   and the optional `commands.worktree_setup` profile slot surfaces per-tree setup.
   Workflow documented in `PILOT.md` ("Parallel tickets").
 - [ ] **Onboarding auto-detection (`detect.js`)** — infer lint/test/hook commands from
-  lockfiles/configs instead of the manual interview (plan P2.1–P2.5).
+  lockfiles/configs instead of the manual interview (plan P2.1–P2.5). Deliberately
+  still open: the interview's cost is one-off per repo, and its output is
+  *verified* commands, which detection alone cannot produce. The adjacent win was
+  taken instead — `pipeline permissions` derives the allow-rules from those
+  verified commands, which is where the per-run friction actually was.
 - [ ] **`connectors.yml` guided ticket fetch** — Jira/GitHub token setup + fetch (plan P2.6);
   today ticket input is a pasted id/link/text.
-- [ ] **Profile-derived permission allow-rules** — after onboarding, add allow-rules for the
-  repo's *own* verified commands (replaces the static toolchain list currently in user settings).
+- [x] **Profile-derived permission allow-rules** — `pipeline permissions` derives one
+  host allow-rule per verified command in the profile and prints them; `--merge` adds
+  them to the host settings idempotently, preserving everything it did not write.
+  Emit-only by default: widening what runs unattended is the developer's call, asked
+  once at onboarding with the exact rules on screen.
 - [ ] **True per-agent token metrics** — the CLI can't see harness token counts; `agents_spawned`
   is the proxy. Needs harness-level instrumentation to close.
 - [ ] **Multi-repo linked runs** — one feature spanning several repos with linked run ids and
   per-repo plans (descoped from pilot v1; currently run each repo as a separate ticket).
 
 ## Progress log
+
+- 2026-09-17 — **Rounds-to-two: measure it, stop paying for it, start accreting.**
+  A revision over the 29 recorded pilot runs produced four numbers that set the
+  agenda: **6/29** runs reached SCRIBE (18 aborted, 15 of them parked at the CI
+  gate waiting for a merge); **816 of 887** block reasons were the write
+  boundary; **0 of 10** knowledge facts carried a runnable command; and **26**
+  pre-PR reviews declared **0** blocking findings while external reviewers were
+  still opening rounds. Delivered in three waves:
+  - **Measure the target.** Round ledger (`pipeline round open|close|list`,
+    `pipeline finding --class --missed-by`) + `ROUND_SOURCES`/`FINDING_CLASSES`
+    as frozen event vocabularies; metrics gain `rounds_to_merge` (delivery +
+    external rounds; **null, never 1, when unmeasured**), `findings_after_pr`,
+    `findings_by_class`, `findings_missed_by`, `learnings_captured`, and the
+    aggregate `median_rounds_to_merge` / `runs_with_round_ledger` /
+    `learning_capture_rate`.
+  - **Stop paying the friction tax.** `pipeline check` — the gate's validators
+    as a free dry run, with the finalization stamp reported apart so a draft
+    artifact does not read as a defect (every stage runbook now requires it
+    before `advance`); `runValidators` returns per-validator `checks` to make
+    that split possible. `pipeline amend-boundary <path> --reason` — the
+    sanctioned widening, appended to the plan's frozen `## Amendments` and read
+    by `git_clean_within` as a union, `no_touch` still refused. Base
+    auto-detection at `new-run` (`detectBase`) — the stacked-branch defect that
+    a knowledge fact recorded and that recurred anyway.
+  - **Close and grow the loop.** CI advances on green CI, merge recorded in
+    `## Outcome` rather than waited for; `abort` returns `harvest: required`
+    with the runbook and records `harvest_pending`, or an explicitly reasoned
+    `harvest_skipped`. Knowledge facts gain a machine-readable `probe:`
+    (`when` / `run` / `asks`, validated as a re-runnable read-only search via
+    the newly exported `readOnlySearchArgv`), `templates/knowledge-fact.md`,
+    `pipeline probes [--all|--lint]` matching the store to the current diff and
+    rendering `## Coupling` rows, and SCRIBE gated on leaving no `missed_by`
+    without a probe.
+  - Also: `pipeline doctor --env` over a new `commands.env_checks` slot (four
+    of 28 recorded developer notes were an unprepared tree diagnosed as a broken
+    change); `pipeline permissions [--merge]` deriving host allow-rules from the
+    profile's own verified commands; `.github/workflows/ci.yml` running the
+    suite on Node 20/22 and the bundle with `node_modules` deleted.
+  - 11 new tests (`check-and-boundary`, `rounds-and-probes`); suite 137 → 148.
 
 - 2026-08-01 — **Rounds-to-zero Tier 1+2** (from the "20-30 rounds → 1-3" assessment;
   root causes ranked from the 3 pilot runs: tooling friction > plan decomposition >

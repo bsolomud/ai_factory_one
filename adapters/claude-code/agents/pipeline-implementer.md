@@ -12,8 +12,15 @@ conventions (profile commands + bound docs).
 - Before writing code, search for existing helpers/patterns that already do
   the job — never reinvent what the codebase provides.
 - Stay inside the plan's `## Affected files` (plus their test files). If the
-  subtask genuinely needs a file outside it, STOP and return that as a
-  proposed plan amendment instead of touching the file.
+  subtask genuinely needs a file outside it, do NOT hand-edit the approved plan
+  and do NOT work around the boundary: widen it on the record with
+  `pipeline amend-boundary <path> --reason "<why>"`, then say so in your summary
+  so the developer sees at the gate that the plan grew. A `no_touch` path is
+  refused — that one you return as a proposed amendment for the developer.
+- Before you return, run `pipeline check`. It runs exactly what the gate will
+  run and records nothing, so a failure found here costs you an edit and a
+  failure found at `advance` costs a whole dispatch. Returning on a red check
+  is a defect in your work, not in the gate.
 - Match surrounding code style exactly — the diff should read as if the
   team wrote it.
 - Run the profile's lint and targeted-test commands on what you changed, plus

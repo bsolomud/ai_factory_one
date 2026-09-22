@@ -57,6 +57,21 @@ export function runMetrics(runDir, runId, config = null) {
   const changeRequests = events.filter(e => e.event === 'change_requested').length
   const reopens = events.filter(e => e.event === 'reopened').length
 
+  // THE pilot target, at last measurable. A round is one pass of feedback over
+  // the shipped change; the ones that decide "can this close in two?" arrive
+  // from outside the run (a reviewer on the PR, a red CI). Before this ledger
+  // the only counter was human_rounds, which sees in-run corrections only — so
+  // a run that took two PR rounds still reported a median of 0.
+  const rounds = events.filter(e => e.event === 'round_opened')
+  const findings = events.filter(e => e.event === 'finding_recorded')
+  const externalRounds = rounds.filter(r => r.source !== 'pre-pr').length
+  // The learning loop's own pass/fail: did this run's lessons get read? A
+  // complete retro means SCRIBE ran; a harvest means an aborted run was still
+  // mined. 18 of 29 pilot runs were aborted, and every one of them dropped its
+  // learnings on the floor — which is the asymmetry that keeps rounds permanent.
+  const harvested = events.some(e => e.event === 'harvest_pending' || e.event === 'harvest_skipped')
+  const reachedScribe = events.some(e => e.event === 'advanced' && e.to === 'SCRIBE')
+
   const spawns = events.filter(e => e.event === 'agent_spawned')
   const skips = events.filter(e => e.event === 'check_skipped')
   // Classify skips so a real UNVERIFIED isn't diluted (pilot retro finding):
@@ -95,6 +110,18 @@ export function runMetrics(runDir, runId, config = null) {
     // context interview, approving a clean gate) are decisions, not rounds.
     human_rounds: gateEdits + changeRequests + reopens,
     change_requests: changeRequests,
+    // rounds_to_merge = the delivery itself, plus every external round it took.
+    // The target is ≤2. null while no round was ever recorded, so a run that
+    // predates the ledger reads as "unmeasured" rather than as a perfect 1.
+    rounds_to_merge: rounds.length ? externalRounds + 1 : null,
+    rounds_by_source: tally(rounds.map(r => r.source)),
+    findings_total: findings.length,
+    findings_after_pr: findings.filter(f => f.source === 'pr').length,
+    findings_by_class: tally(findings.map(f => f.class || 'other')),
+    // Which probe WOULD have caught each finding. The distribution is the work
+    // list: every name that is not 'none' is a probe the repo's store still owes.
+    findings_missed_by: tally(findings.map(f => f.missed_by || 'unrecorded')),
+    learnings_captured: reachedScribe || harvested,
     // Prefer recorded substate; fall back to counting critic agent spawns, so a
     // dispatcher that ran the critic but forgot `set-substate critic_round` still
     // reports the real engagement (seen in a pilot: critic ran 2 rounds, substate said 0).
@@ -166,9 +193,23 @@ export function aggregate(runsMetrics) {
   const withGates = runsMetrics.filter(m => m.gates_approved > 0)
   const fpRates = runsMetrics.map(m => m.first_pass_green_rate).filter(r => r != null)
   const lowSample = finished < MIN_TREND_RUNS
+  const measuredRounds = runsMetrics.map(m => m.rounds_to_merge).filter(r => r != null)
+  const missedBy = {}
+  for (const m of runsMetrics) {
+    for (const [k, v] of Object.entries(m.findings_missed_by || {})) missedBy[k] = (missedBy[k] || 0) + v
+  }
   return {
     runs: finished,
     low_sample: lowSample,
+    // The headline. Reported alongside its own sample size, because an
+    // unmeasured run is not a run that took one round.
+    median_rounds_to_merge: median(measuredRounds),
+    runs_with_round_ledger: measuredRounds.length,
+    total_findings_after_pr: sum(runsMetrics.map(m => m.findings_after_pr || 0)),
+    findings_missed_by: missedBy,
+    // Did the loop close? Every run that is not captured is a run whose lessons
+    // no future run can use — the rate this pipeline's round count depends on.
+    learning_capture_rate: finished ? round(runsMetrics.filter(m => m.learnings_captured).length / finished) : null,
     median_human_rounds: median(runsMetrics.map(m => m.human_rounds).filter(r => r != null)),
     mean_first_pass_green_rate: mean(fpRates),
     mean_gate_edit_rate: mean(withGates.map(m => m.gate_edit_rate).filter(r => r != null)),
@@ -179,7 +220,7 @@ export function aggregate(runsMetrics) {
     total_feedback_notes: sum(runsMetrics.map(m => m.feedback_notes)),
     note: lowSample
       ? `only ${finished} finished run(s) — the mean rates below are anecdotal, NOT a trend; don't read a single run as a quality signal. Need ${MIN_TREND_RUNS}+ runs.`
-      : 'median_human_rounds is the pilot target (corrections per run — aim ≤3, ideally 0 with decisions front-loaded at CONTEXT); first_pass_green_rate and gate_edit_rate are the supporting quality signals.'
+      : `median_rounds_to_merge is THE target (aim ≤2) — read it together with runs_with_round_ledger, since runs without a recorded round are unmeasured, not clean. findings_missed_by names the probes the knowledge store still owes; learning_capture_rate says whether any of it is being written down. human_rounds/first_pass_green_rate/gate_edit_rate remain the in-run quality signals.`
   }
 }
 

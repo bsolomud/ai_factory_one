@@ -88,6 +88,23 @@ export function backtickPaths(line) {
 // false-blocked 17/18 pilot runs at PLAN (FP-2).
 const carriesPathClaims = line => /^\s*(\||[-*]\s|\d+[.)]\s)/.test(line)
 
+// Paths the run's approved plan gained AFTER approval, via `pipeline
+// amend-boundary`. The approved sections are frozen — an amendment appends,
+// never rewrites — so the write boundary is 'Affected files' ∪ these.
+// Deliberately keyed to a machine marker (`- boundary:`) rather than any
+// backticked path in '## Amendments': an amendment narrative naming a file must
+// never widen the boundary by accident. Only the CLI writes these lines.
+export const BOUNDARY_MARKER = /^\s*[-*]\s*boundary:/i
+
+export function boundaryAmendments(body) {
+  const text = sections(body)['Amendments'] ?? ''
+  const paths = []
+  for (const line of text.split('\n')) {
+    if (BOUNDARY_MARKER.test(line)) paths.push(...backtickPaths(line))
+  }
+  return [...new Set(paths)]
+}
+
 // Paths mentioned in a section: backticked tokens and bare path-like words.
 // A line annotated "(new)" lists a file the plan will CREATE — exempt from
 // existence checks. Trailing :123 line references are stripped.

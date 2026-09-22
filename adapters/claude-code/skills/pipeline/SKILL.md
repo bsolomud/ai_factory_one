@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline pr-feedback triages reviewer comments on the open PR into a gated rework round; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline harvest back-fills retros and knowledge facts from parked runs; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | harvest [--repo <slug>] | status | show | repos | metrics | assets | feedback "<note>" | doctor
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | amend-boundary <path> | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | harvest [--repo <slug>] | status | show | repos | metrics | probes | assets | feedback "<note>" | doctor [--env]
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -218,6 +218,10 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 3. Relay the executor's summary in the report format above. GATE → approve
    protocol; ADVANCED/DONE → say what `/pipeline work` does next; BLOCKED after
    the agent's 3 rounds → show its blockers. STOP.
+   - A BLOCKED verdict from a stage agent that never ran `pipeline check` is a
+     process failure, not bad luck: the runbooks require the dry run before
+     `advance`, precisely so the agent finds its own defects for free. Say so in
+     the handoff when you re-dispatch.
 4. When a run with a worktree reaches DONE (or is aborted), offer cleanup:
    `pipeline worktree remove --run <id>` (add `--delete-branch` only once the
    PR is merged). Never remove it unasked — the developer may still be using it.
@@ -271,11 +275,49 @@ session; work them as a triaged, gated rework round — never as ad-hoc edits.
      PR gates; the re-push waits for the PR gate as always. (The reopen event
      is what feeds human_rounds/rework — never work feedback without one.)
    - Nothing accepted → no reopen; go straight to replies.
+   - The triage agent opens the round and records one finding per comment; make
+     sure it closed the round once every row is decided (`pipeline round list`
+     shows an open one). An un-closed round leaves the run's `rounds_to_merge`
+     wrong, which is the number this whole flow exists to make true.
 5. Replies: once the developer approves the drafted replies (and any reworked
    branch has been pushed), spawn **pipeline-pr-feedback** (`phase: reply`,
    the approved replies listed in the handoff). It posts exactly those,
    resolves exactly those threads, and updates the artifact's Outcome. Never
    post or resolve anything without that approval.
+
+## The round ledger — the number this whole pipeline exists to lower
+
+A **round** is one pass of feedback over the shipped change. The target is
+"any task closes in ≤2 rounds", and the rounds that decide it arrive from
+OUTSIDE the run: a reviewer on the PR, a red CI. Until this ledger existed the
+only counter was `human_rounds`, which sees in-run corrections only — so a run
+that took two reviewer rounds still reported a median of 0, and the number the
+pipeline is built to reduce was the one number nobody recorded.
+
+The stage agents do the recording (their runbooks say when): `round open`,
+one `finding` per item with a `--missed-by`, `round close`. Your job is to make
+it visible and to never let a round go unrecorded — **any time the developer
+brings you feedback on the shipped change, it is a round.** If they paste PR
+comments outside `/pipeline pr-feedback`, still open one.
+
+`--missed-by` names the search that WOULD have caught the finding before the
+code existed, and SCRIBE is required to leave the repo with a probe of that
+name. That pairing is the only mechanism here that lowers the round count over
+time; everything else just keeps it from rising.
+
+## Boundary gate blocked → `pipeline amend-boundary`
+
+The most common block in the pilot by a wide margin: the change genuinely needs
+a file the approved plan did not foresee. The plan is frozen after approval, so
+the sanctioned move is an appended amendment, not an edit:
+`pipeline amend-boundary <path> --reason "<why the change needs it>"`. It adds
+one audited line to the plan's `## Amendments`, is honored by the boundary check
+immediately, and a `no_touch` path is still refused.
+
+**Always surface it at the gate** under **Need you on this**, in one plain line:
+the developer approved a plan that did not include that file, and a boundary
+that grows silently is exactly the thing this gate exists to prevent. If the
+file looks like a mistake rather than a necessity, say so and ask.
 
 ## Boundary gate blocked on untracked files → `pipeline ignore-untracked`
 
@@ -320,6 +362,12 @@ Own agent, interactive via two phases:
 4. Show the final profile it returns; on the developer's explicit
    confirmation the repo is ready. Re-run `/pipeline onboard` any time to
    change choices (prefilled, nothing silently dropped).
+5. Run `pipeline permissions` and show the derived allow-rules — one per
+   verified command in the profile, i.e. the commands every run of this repo was
+   always going to execute. Ask whether to apply them; on an explicit yes,
+   `pipeline permissions --merge`. Nothing is written without that yes. The
+   alternative is a permission prompt on every lint and test invocation for the
+   life of the repo, which is how people learn to approve without reading.
 
 ## `/pipeline harvest [--repo <slug>]` — back-fill the learning loop
 
@@ -356,22 +404,45 @@ in the audit log. Harvest mines them now, without advancing anything:
 NEVER approve otherwise — not to unblock yourself, not because it "looks
 trivial", never bundled with another command. Every approval is audited.
 
-## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics` · `/pipeline assets`
+## A run ends without reaching SCRIBE → harvest it, always
+
+`pipeline abort` returns `harvest: required` and the runbook path. Act on it in
+the same breath: spawn the harvest agent (as in `/pipeline harvest` below) for
+that run before moving on. This is not bookkeeping — 18 of 29 pilot runs were
+aborted, mostly while parked waiting for a merge, and every one of them dropped
+a run's worth of learnings that were sitting in its own audit log. The developer
+can decline (`pipeline abort --no-harvest "<their reason>"`), and then it is
+their recorded decision rather than a silent loss.
+
+## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics` · `/pipeline probes` · `/pipeline assets`
 
 Run the matching CLI command and present for humans:
 - **status / show** — run(s), stage, substate (subtask i of N), unverified
   checks, reconcile notes, exact next step (`show` also returns the current
   artifact body for review).
 - **repos** — repos the pipeline knows and their active runs.
-- **metrics** — pilot numbers (human rounds — THE target, corrections per
-  run; first-pass-green rate, gate-edit rate, blocked histogram, critic
-  rounds, agents spawned, feedback notes). Present the headline rates and say
-  what they imply.
+- **metrics** — lead with `median_rounds_to_merge` (THE target, aim ≤2) and
+  always say it alongside `runs_with_round_ledger`: a run with no recorded round
+  is UNMEASURED, never a clean single round, and reporting it as one is the
+  exact failure the ledger was added to fix. Then `findings_missed_by` (the
+  probes the repo still owes), `learning_capture_rate` (share of runs whose
+  lessons were written down at all), and the in-run quality signals —
+  human rounds, first-pass-green rate, gate-edit rate, blocked histogram,
+  critic rounds, agents spawned.
+- **probes** — the searches this repo has LEARNED, matched to what the current
+  change touches. `--lint` audits the store: facts with no runnable probe, and
+  probes the Coupling gate would refuse to re-run. Present a lint gap as work,
+  not as an error — each one is a lesson the next run cannot apply.
 - **assets** — per-repo usage report: which knowledge facts, bound skills and
   docs the runs actually consulted (plus MCP-tool call counts), and which were
   never touched. Present the unused list as candidates to improve or remove —
   the developer decides; nothing is deleted automatically.
 - **doctor** — validates the repo profile; relay errors/warnings plainly.
+  `doctor --env` is the other half: it runs the repo's own environment checks in
+  the run's working tree and reports what the tree cannot do yet, naming the fix
+  command per check. Reach for it whenever a gate goes red in a way that smells
+  like the checkout rather than the change — and offer it before the first
+  subtask of any run working in its own worktree.
 
 ## `/pipeline feedback "<note>"`
 
@@ -389,3 +460,8 @@ part of the job, not optional.
 - Relay every `unverified` entry the CLI returns at a gate — no false green.
   (The CLI shows each skip once and carries only coverage gaps forward; you
   never re-list old stage-local skips yourself.)
+- Never report an UNMEASURED run as a clean one. `rounds_to_merge: null` means
+  no round was recorded, not that there were none — say "not measured".
+- Never let feedback on shipped code go unrecorded as a round, and never end an
+  aborted run without either harvesting it or recording the developer's refusal.
+- A widened write boundary is always surfaced at the gate, never applied quietly.

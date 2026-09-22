@@ -40,9 +40,9 @@ export function installProfile(home, slug, profile) {
 }
 
 // Run the real executable, exactly as the model would.
-export function cli(args, { home, cwd }) {
+export function cli(args, { home, cwd, env: extraEnv = {} }) {
   const bin = path.join(PACKAGE_ROOT, 'bin', 'pipeline')
-  const env = { ...process.env, AI_FACTORY_HOME: home }
+  const env = { ...process.env, AI_FACTORY_HOME: home, ...extraEnv }
   try {
     const stdout = execFileSync('node', [bin, ...args], { cwd, env, encoding: 'utf8' })
     return { code: 0, ...JSON.parse(stdout) }

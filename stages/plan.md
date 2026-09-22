@@ -36,9 +36,17 @@ command and compares its line count against Hits** — so record a read-only
 search (`git grep` / `grep` / `rg`, no shell operators) and the number of lines
 it really printed. A claim that cannot survive its own command is not evidence.
 
-The pipeline's **change-probes** skill (`~/.claude/skills/change-probes/SKILL.md`)
-carries the probe list with the command shape and the real finding behind each;
-use it to build this table and record `pipeline used skill change-probes`.
+**Start from what this repo has already learned**: `pipeline probes` returns the
+probes whose file-shape matches this change — searches that cost this repo a
+review round once and were written down so they never cost another. Run each,
+put the REAL hit count in the table, and dispose of what it returns. It also
+prints them pre-formatted as `## Coupling` rows. If it returns nothing, that is
+information too: this change is in territory the store has never been burned in.
+
+Then widen with the generic list: the pipeline's **change-probes** skill
+(`~/.claude/skills/change-probes/SKILL.md`) carries the six probes with the
+command shape and the real finding behind each; use it to build the remaining
+rows and record `pipeline used skill change-probes`.
 
 Work the list; give every question that applies a row:
 - who else **writes** this? (the sibling path carrying the same gap)
@@ -88,10 +96,17 @@ change and its spec-rewrite were split, and the change subtask blocked repeatedl
    - The critique is stored as `artifacts/02-plan-critique.md`.
 4. **Finalize** (`pipeline-planner`, mode finalize): verify traceability —
    every acceptance criterion → a subtask + a testing-strategy entry; every
-   non-`(new)` affected file exists.
+   non-`(new)` affected file exists. Then **self-certify before declaring done**:
+   run `pipeline check` and fix what it reports. It runs the exact validators
+   the gate will run, records nothing, and costs no round-trip — where
+   `advance` costs a blocked event and a fresh dispatch. Nearly every PLAN
+   block in the pilot was a decomposition or path defect this check names for
+   free: a file in `## Subtasks` that is not in `## Affected files`, a source
+   file whose spec sits in a different subtask, a path that does not exist.
 
 ## Done when
-Fill the BLUF header at the top (Decision, Files/Subtasks/Critic counts, TL;DR,
+`pipeline check` is GREEN apart from the finalization stamp. Fill the BLUF
+header at the top (Decision, Files/Subtasks/Critic counts, TL;DR,
 Needs you). Critic clean (or escalated), sections complete, `status: complete` set LAST;
 run `pipeline advance`; present the plan summary (approach, subtasks, risks,
 open questions) — the developer approves with `! pipeline approve`, then

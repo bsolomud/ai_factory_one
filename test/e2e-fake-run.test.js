@@ -276,16 +276,30 @@ test('set-base retargets a stacked run; new-run --base sets it up front', () => 
   repo.write('stacked.txt', 'work\n')
   repo.git('add', '-A'); repo.git('commit', '-qm', 'stacked work')
 
-  run(['new-run', 'B-1'])
-  const retarget = run(['set-base', 'feature/stacked'])
-  assert.equal(retarget.from, 'master', 'started on the profile convention')
-  assert.equal(retarget.base, 'feature/stacked')
+  // Detected, not remembered: the profile says master, but HEAD carries commits
+  // master does not, so the run stacks. Leaving this to the developer is what
+  // made the defect recur after a knowledge fact had already recorded it.
+  const created = run(['new-run', 'B-1'])
+  assert.equal(created.base, 'feature/stacked', 'stacked base auto-detected at run creation')
+  assert.match(created.base_note, /stacks on it/)
   assert.equal(run(['set-base', 'feature/stacked']).note, 'already the run base — nothing changed', 'idempotent')
+
+  // set-base stays the override for everything detection cannot know.
+  const retarget = run(['set-base', 'master'])
+  assert.equal(retarget.from, 'feature/stacked')
+  assert.equal(retarget.base, 'master')
   assert.equal(run(['set-base', 'no/such/branch']).verdict, 'ERROR', 'unresolvable base is refused, not silently accepted')
   assert.equal(run(['set-base']).verdict, 'ERROR', 'missing argument is a usage error')
 
-  assert.equal(run(['new-run', 'B-2', '--base', 'feature/stacked']).verdict, 'CREATED')
+  // An explicit --base always wins over detection.
+  assert.equal(run(['new-run', 'B-2', '--base', 'master']).base, 'master')
   assert.equal(run(['status', '--run', 'B-2']).verdict, 'ACTIVE_RUN')
+
+  // On the trunk with nothing ahead, the profile convention stands unchanged.
+  repo.git('checkout', '-q', 'master')
+  const plain = run(['new-run', 'B-3'])
+  assert.equal(plain.base, 'master')
+  assert.equal(plain.base_note, undefined, 'no note when nothing was detected')
 })
 
 // Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.

@@ -161,6 +161,68 @@ test('probes: learned searches are matched to the diff, and a fact without one i
   assert.equal(all.rows.length, 1, 'only coupling-tier probes render as rows')
 })
 
+// Some lessons genuinely have no searchable shape — a triage method applied to
+// a screenshot, an environment cost. Nagging about them forever would make the
+// lint worthless exactly when the store gets good, so the omission can be
+// DECLARED. Saying so costs a reason, like the Coupling gate's "None." rule.
+test('a probe-less fact can be declared, with a reason, and stops reading as a gap', () => {
+  const { home, run, slug } = startedRun('declared-repo')
+  const knowledge = path.join(home, 'repos', slug, 'knowledge')
+
+  writeFile(knowledge, 'env-cost.md', [
+    '---', 'probe: none',
+    'probe_none: "an environment cost, not a code shape — belongs in commands.env_checks"',
+    '---', '# Cold boot is slow\n'
+  ].join('\n'))
+  let lint = run(['probes', '--lint'])
+  assert.equal(lint.verdict, 'OK', 'a declared omission is a decision, not a gap')
+  assert.deepEqual(lint.declared_none.map(d => d.fact), ['env-cost'])
+  assert.equal(lint.issues.length, 0)
+
+  // …but a bare declaration with no reason is an oversight wearing a decision's
+  // clothes, and the lint says so.
+  writeFile(knowledge, 'bare.md', '---\nprobe: none\n---\n# No reason given\n')
+  lint = run(['probes', '--lint'])
+  assert.equal(lint.verdict, 'GAPS')
+  assert.match(lint.issues.map(i => i.issue).join(' '), /without a reason/)
+})
+
+test('probes are deduplicated by command, and gh api is read-only or not at all', () => {
+  const { home, run, slug } = startedRun('dedupe-repo')
+  const knowledge = path.join(home, 'repos', slug, 'knowledge')
+
+  // Two lessons that legitimately share one search.
+  for (const [name, asks] of [['stacked-base', 'is this branch stacked?'], ['lint-flood', 'will the lint gate flood on a long-lived branch?']]) {
+    writeFile(knowledge, `${name}.md`, [
+      '---', 'probe:', '  - when: ["**"]', '    run: git rev-list --count master..HEAD',
+      `    asks: "${asks}"`, '---', `# ${name}\n`
+    ].join('\n'))
+  }
+  // A gh api call in its write form must never be offered.
+  writeFile(knowledge, 'writes.md', [
+    '---', 'probe:', '  - when: ["**"]',
+    '    run: gh api repos/x/y/issues -f title=oops', '    asks: "what?"',
+    '---', '# Not read-only\n'
+  ].join('\n'))
+  // …and in its GET form it is a legitimate inspection.
+  writeFile(knowledge, 'alerts.md', [
+    '---', 'probe:', '  - when: ["**"]',
+    '    run: gh api repos/x/y/code-scanning/alerts?state=open', '    asks: "which rule ids are open?"',
+    '---', '# Alerts\n'
+  ].join('\n'))
+
+  const matched = run(['probes', 'src/app.sh'])
+  const commands = matched.probes.map(p => p.run)
+  assert.equal(commands.filter(c => c === 'git rev-list --count master..HEAD').length, 1, 'one command, listed once')
+  const shared = matched.inspect.find(i => i.run.startsWith('git rev-list'))
+  assert.deepEqual(shared.facts.sort(), ['lint-flood', 'stacked-base'], 'both lessons keep their attribution')
+  assert.ok(commands.includes('gh api repos/x/y/code-scanning/alerts?state=open'), 'the GET form is offered')
+  assert.ok(!commands.some(c => c.includes('-f title')), 'the write form is never offered')
+
+  const lint = run(['probes', '--lint'])
+  assert.match(lint.issues.map(i => i.issue).join(' '), /will not run unattended/)
+})
+
 test('probes on a repo with no store says so instead of inventing one', () => {
   const { run } = startedRun('empty-store-repo')
   const r = run(['probes', 'src/app.sh'])

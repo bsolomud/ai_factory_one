@@ -70,8 +70,10 @@ list — every `missed_by` name that is not `none` is a probe this repo owes.
     run id + the file/PR/event that proves it). The frontmatter is what
     `pipeline probes` reads, so a fact whose probe is missing or is not a
     read-only search is a fact no future run can use — `pipeline probes --lint`
-    names both. If a file for the topic already exists, update it instead of
-    duplicating.
+    names both. A fact with genuinely no searchable shape declares
+    `probe: none` plus `probe_none: "<why>"`; the reason is what makes it a
+    decision rather than an oversight. If a file for the topic already exists,
+    update it instead of duplicating.
     LAST, append one line to `knowledge_dir/index.md`:
     `- [<topic>](<topic>.md) — <one-line hook>` (create the index if missing).
     CONTEXT and PLAN read the index first, so the hook line decides whether

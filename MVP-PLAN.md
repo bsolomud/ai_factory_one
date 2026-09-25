@@ -143,6 +143,25 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
 
 ## Progress log
 
+- 2026-09-25 — **Base detection: ask, don't decide** (regression fix, two days
+  after shipping). The auto-applying `detectBase` from 2026-09-17 cost a run on
+  its second day: a developer standing on a personal wrap-up branch one commit
+  ahead of the trunk had the run based on it, aborted at CONTEXT, and recreated
+  from master by hand (`portal/runs/MB-47141.aborted-wrong-base-20260924`).
+  Detection cannot distinguish "the feature branch this work stacks on" from
+  "the branch I happen to be standing on" — and the framework proposal that
+  started this asked to *ask for or validate* the base, which is what it now
+  does. `new-run` keeps the profile convention and returns `base_candidate` +
+  `base_question` (carrying the exact `set-base` command); the dispatcher must
+  put it to the developer before any stage work. Wrong-by-default is one
+  command to recover; wrong-by-guess is a recreated run.
+  Paired with a diagnosis at the point of pain: runs now record
+  `git.start_sha`, and a boundary block whose out-of-plan files have not changed
+  since the run began appends a **BASE CHECK** reason naming the real cause
+  instead of leaving a one-file change to read as wildly out of scope. Untracked
+  run-created files are excluded, so a genuine violation is never blamed on the
+  base. Suite 148 → 150.
+
 - 2026-09-17 — **Rounds-to-two: measure it, stop paying for it, start accreting.**
   A revision over the 29 recorded pilot runs produced four numbers that set the
   agenda: **6/29** runs reached SCRIBE (18 aborted, 15 of them parked at the CI

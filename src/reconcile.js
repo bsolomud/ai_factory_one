@@ -77,7 +77,7 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   const wtEvent = events.filter(e => e.event === 'worktree_created' || e.event === 'worktree_removed').at(-1)
   const worktree = wtEvent?.event === 'worktree_created' ? wtEvent.path : null
 
-  const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked, worktree })
+  const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked, worktree, startSha: created?.start_sha || null })
   state.gates = gates
 
   if (lastComplete) {

@@ -28,7 +28,7 @@ export const ROUND_SOURCES = ['pre-pr', 'pr', 'ci']
 // run runs, instead of a lesson nobody can act on.
 export const FINDING_CLASSES = ['coupling', 'population', 'proof', 'correctness', 'style', 'scope', 'other']
 
-export function newState({ runId, repo, stage, base, branch, baselineUntracked, worktree }) {
+export function newState({ runId, repo, stage, base, branch, baselineUntracked, worktree, startSha }) {
   return {
     schema_version: 1,
     run_id:         runId,
@@ -38,7 +38,13 @@ export function newState({ runId, repo, stage, base, branch, baselineUntracked, 
     substate:       { critic_round: 0, subtask: null, of: null },
     autonomy:       'gated',
     gates:          [],
-    git:            { branch: branch || null, base: base || 'master', worktree: worktree || null, last_sha: null, baseline_untracked: baselineUntracked || [] },
+    // start_sha: where HEAD stood when the run was created. The base says what
+    // "this change" is diffed FROM; start_sha says what existed BEFORE the run
+    // touched anything — which is the only way to tell a file this run changed
+    // from a file that was already different when it began. Used to diagnose a
+    // wrong base at the moment it hurts. Absent on runs created before it
+    // existed; every reader treats that as "unknown", never as "nothing".
+    git:            { branch: branch || null, base: base || 'master', start_sha: startSha || null, worktree: worktree || null, last_sha: null, baseline_untracked: baselineUntracked || [] },
     session_ids:    {},
     unverified:     [],
     // Slots the developer declared not-applicable for this run's shape (e.g. a

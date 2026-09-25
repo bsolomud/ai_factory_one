@@ -276,30 +276,36 @@ test('set-base retargets a stacked run; new-run --base sets it up front', () => 
   repo.write('stacked.txt', 'work\n')
   repo.git('add', '-A'); repo.git('commit', '-qm', 'stacked work')
 
-  // Detected, not remembered: the profile says master, but HEAD carries commits
-  // master does not, so the run stacks. Leaving this to the developer is what
-  // made the defect recur after a knowledge fact had already recorded it.
+  // Asked, never decided. Detection cannot tell "the branch this work stacks
+  // on" from "the branch I happen to be standing on" — an auto-applying version
+  // of this cost a real run within two days of shipping (a personal wrap-up
+  // branch, one commit ahead, taken as the base). So the profile convention
+  // stands and the candidate is surfaced as a question.
   const created = run(['new-run', 'B-1'])
-  assert.equal(created.base, 'feature/stacked', 'stacked base auto-detected at run creation')
-  assert.match(created.base_note, /stacks on it/)
-  assert.equal(run(['set-base', 'feature/stacked']).note, 'already the run base — nothing changed', 'idempotent')
+  assert.equal(created.base, 'master', 'the profile convention stands until the developer says otherwise')
+  assert.equal(created.base_candidate, 'feature/stacked')
+  assert.match(created.base_question, /ASK THE DEVELOPER/)
+  assert.match(created.base_question, /pipeline set-base feature\/stacked/, 'the question carries the exact command that answers it')
 
-  // set-base stays the override for everything detection cannot know.
-  const retarget = run(['set-base', 'master'])
-  assert.equal(retarget.from, 'feature/stacked')
-  assert.equal(retarget.base, 'master')
+  // Answering it is the developer's one command.
+  const retarget = run(['set-base', 'feature/stacked'])
+  assert.equal(retarget.from, 'master')
+  assert.equal(retarget.base, 'feature/stacked')
+  assert.equal(run(['set-base', 'feature/stacked']).note, 'already the run base — nothing changed', 'idempotent')
   assert.equal(run(['set-base', 'no/such/branch']).verdict, 'ERROR', 'unresolvable base is refused, not silently accepted')
   assert.equal(run(['set-base']).verdict, 'ERROR', 'missing argument is a usage error')
 
-  // An explicit --base always wins over detection.
-  assert.equal(run(['new-run', 'B-2', '--base', 'master']).base, 'master')
+  // An explicit --base is an answer already given: no question is raised.
+  const explicit = run(['new-run', 'B-2', '--base', 'feature/stacked'])
+  assert.equal(explicit.base, 'feature/stacked')
+  assert.equal(explicit.base_question, undefined)
   assert.equal(run(['status', '--run', 'B-2']).verdict, 'ACTIVE_RUN')
 
-  // On the trunk with nothing ahead, the profile convention stands unchanged.
+  // On the trunk with nothing ahead there is nothing to ask about.
   repo.git('checkout', '-q', 'master')
   const plain = run(['new-run', 'B-3'])
   assert.equal(plain.base, 'master')
-  assert.equal(plain.base_note, undefined, 'no note when nothing was detected')
+  assert.equal(plain.base_candidate, undefined, 'no question when no candidate was detected')
 })
 
 // Any-folder flow: NO_REPO verdict lists registered repos; --repo <slug> works from anywhere.

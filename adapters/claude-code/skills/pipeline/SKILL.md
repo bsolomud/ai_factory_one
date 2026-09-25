@@ -158,7 +158,18 @@ yet — so spawn the onboarder agent directly.)
    gets its own working tree (reported as `worktree` in the output; use it as
    the handoff `workdir:`). If the output lists `worktree_setup` commands,
    relay them to the developer (or run them on their ok) before the CONTEXT
-   stage — a fresh worktree has no installed deps or local config. Then write
+   stage — a fresh worktree has no installed deps or local config.
+   - **If the output carries `base_question`, ASK IT FIRST — before any stage
+     work.** The developer is standing on a branch ahead of the trunk, and only
+     they know whether this task builds on it. Put it as one plain question
+     ("You're on `<branch>`, 3 commits ahead of master — does this task build on
+     that work, or is it independent?") and act on the answer:
+     `pipeline set-base <branch>` if it stacks, nothing if it doesn't. The CLI
+     deliberately does NOT decide this: a version that guessed cost a run within
+     two days, basing it on a personal wrap-up branch. Answering late is
+     expensive — with the wrong base the boundary check reports every file on
+     that branch, so ask now, not at the first red gate.
+   Then write
    the developer's raw input to `<run_dir>/artifacts/00-ticket.md`,
    prefixed with a short BLUF header above the raw body — a blockquote with
    **source** (ticket id / link / "pasted text"), any **ids** (e.g. Airbrake,

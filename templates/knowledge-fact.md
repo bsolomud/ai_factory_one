@@ -24,9 +24,17 @@
 # agent to run unattended. Anything else is reported by `pipeline probes --lint`
 # and never offered.
 #
-# Drop a probe entry only when the fact genuinely has no searchable shape (an
-# environment gotcha, a product decision). `--lint` will flag it; say so in the
-# body rather than inventing a command that finds nothing.
+# When the fact genuinely has no searchable shape — a triage method applied to a
+# screenshot, an environment cost that belongs in `commands.env_checks` — DECLARE
+# it instead of leaving the field out:
+#
+#   probe: none
+#   probe_none: "why no command can express this"
+#
+# A declared omission is a decision and `--lint` accepts it; a missing one is an
+# oversight and `--lint` reports it. The reason is what separates them, which is
+# the same rule the Coupling gate applies to a bare "None." Never invent a
+# command that finds nothing just to fill the field.
 probe:
   - when: ["<glob the change must touch, e.g. app/**/*.rb — use ['**'] for a fact about any change>"]
     run: "git grep -n <symbol> -- <roots>"

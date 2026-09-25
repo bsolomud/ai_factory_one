@@ -836,6 +836,9 @@ const commands = {
         repo: ctx.slug,
         facts: facts.length,
         with_probe: facts.filter(f => f.has_probe).length,
+        // Counted separately from both: these are facts whose author decided,
+        // with a reason on the record, that no command can express them.
+        declared_none: facts.filter(f => f.declared_none).map(f => ({ fact: f.fact, reason: f.probe_none })),
         issues,
         note: issues.length
           ? `${issues.length} fact(s) cannot be applied by a future run. A knowledge fact without a runnable probe is a story; the plan's '## Coupling' table can cite only a command.`
@@ -871,7 +874,7 @@ const commands = {
       // Searches whose hit count belongs in '## Coupling' (the gate re-runs them)…
       coupling_rows: coupling.map(couplingRow),
       // …and inspections that answer a question without producing a row.
-      inspect: inspect.map(p => ({ fact: p.fact, run: p.run, asks: p.asks })),
+      inspect: inspect.map(p => ({ facts: p.facts ?? [p.fact], run: p.run, asks: p.asks })),
       ...(issues.length && { store_gaps: issues.length }),
       note: matched.length
         ? `${coupling.length} coupling probe(s) to run and record in '## Coupling', ${inspect.length} inspection(s) to answer. These are checks that cost this repo a review round before.`

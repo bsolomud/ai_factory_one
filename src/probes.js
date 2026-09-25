@@ -49,8 +49,13 @@ const INSPECT_PREFIXES = [
   ['git', 'log'], ['git', 'rev-list'], ['git', 'diff'], ['git', 'show'],
   ['git', 'status'], ['git', 'ls-files'], ['git', 'blame'], ['git', 'describe'],
   ['gh', 'pr', 'view'], ['gh', 'pr', 'checks'], ['gh', 'pr', 'diff'],
-  ['gh', 'run', 'view'], ['gh', 'run', 'list'], ['gh', 'issue', 'view']
+  ['gh', 'run', 'view'], ['gh', 'run', 'list'], ['gh', 'issue', 'view'],
+  // `gh api` is the only read path to code-scanning and check state, and two
+  // facts in the field store need it. Allowed ONLY in its GET form: the flags
+  // below are what turn it into a write, so their presence disqualifies it.
+  ['gh', 'api']
 ]
+const GH_API_WRITE_FLAGS = ['-X', '--method', '-f', '--field', '-F', '--raw-field', '--input']
 const SHELL_OPERATORS = /[|;&><`$(){}]/
 
 // 'coupling' | 'inspect' | null (null = this pipeline will not run it).
@@ -59,6 +64,7 @@ export function classifyProbeCommand(cmd) {
   const text = String(cmd ?? '')
   if (SHELL_OPERATORS.test(text.replace(/"[^"]*"|'[^']*'/g, ''))) return null
   const argv = text.trim().split(/\s+/)
+  if (argv[0] === 'gh' && argv[1] === 'api' && argv.some(a => GH_API_WRITE_FLAGS.includes(a))) return null
   return INSPECT_PREFIXES.some(p => p.every((tok, i) => argv[i] === tok)) ? 'inspect' : null
 }
 
@@ -77,9 +83,27 @@ export function readProbes(knowledgeDir) {
     const parsed = parseArtifact(abs)
     const fact = file.replace(/\.md$/, '')
     const raw = parsed?.frontmatter?.probe
-    const list = raw == null ? [] : Array.isArray(raw) ? raw : [raw]
     const probes = []
     const issues = []
+
+    // A DECLARED omission. Some lessons have no searchable shape at all — a
+    // triage method applied to a screenshot, an environment cost that belongs in
+    // env_checks — and nagging about them forever would make the lint signal
+    // worthless exactly when the store gets good. Saying so costs a reason, for
+    // the same reason the Coupling gate refuses a bare "None.": if you cannot
+    // write the sentence honestly, the probe is missing rather than impossible.
+    if (typeof raw === 'string' && raw.trim().toLowerCase() === 'none') {
+      const why = String(parsed.frontmatter?.probe_none ?? '').trim()
+      if (why.length < 12) {
+        issues.push(`${file} declares 'probe: none' without a reason — add 'probe_none: "<why this fact has no searchable shape>"'. A declared omission is a decision; an undeclared one is an oversight, and the lint cannot tell them apart without the sentence.`)
+        facts.push({ fact, file, path: abs, probes, issues, has_probe: false, declared_none: false })
+      } else {
+        facts.push({ fact, file, path: abs, probes, issues, has_probe: false, declared_none: true, probe_none: why })
+      }
+      continue
+    }
+
+    const list = raw == null ? [] : Array.isArray(raw) ? raw : [raw]
     list.forEach((p, i) => {
       const where = `${file} probe[${i}]`
       if (!p || typeof p !== 'object') { issues.push(`${where} is not a mapping — each probe needs 'when', 'run' and 'asks'`); return }
@@ -104,15 +128,32 @@ export function readProbes(knowledgeDir) {
 // Probes whose `when` globs match any of the changed files. A probe with no
 // match is not offered — the point is a short, diff-shaped list the planner will
 // actually run, not the whole store.
+// Deduplicated by COMMAND, because two lessons legitimately share one search
+// (a stacked run and a flooded lint gate are both answered by "how far ahead is
+// this branch?"). Listing it twice is how a useful preflight list turns into
+// noise an agent learns to skim — the same reason the probe rules forbid a
+// command that cannot fail. The merged entry cites every fact behind it, so no
+// lesson loses its attribution.
 export function matchingProbes(facts, files) {
-  const out = []
+  const byCommand = new Map()
   for (const f of facts) {
     for (const p of f.probes) {
       const matched = files.filter(file => matchesAny(file, p.when))
-      if (matched.length) out.push({ ...p, matched })
+      if (!matched.length) continue
+      const seen = byCommand.get(p.run)
+      if (!seen) {
+        byCommand.set(p.run, { ...p, facts: [p.fact], matched })
+        continue
+      }
+      if (!seen.facts.includes(p.fact)) {
+        seen.facts.push(p.fact)
+        // Keep the longest `asks`: the fuller question is the one worth reading.
+        if (p.asks.length > seen.asks.length) seen.asks = p.asks
+      }
+      for (const m of matched) if (!seen.matched.includes(m)) seen.matched.push(m)
     }
   }
-  return out
+  return [...byCommand.values()]
 }
 
 // Facts that carry no runnable probe (plus malformed ones). SCRIBE routes these
@@ -121,6 +162,7 @@ export function probeIssues(facts) {
   const issues = []
   for (const f of facts) {
     for (const i of f.issues) issues.push({ fact: f.fact, issue: i, kind: 'malformed' })
+    if (f.declared_none) continue // a decision, already reasoned — not a gap
     if (!f.has_probe && f.issues.length === 0) {
       issues.push({ fact: f.fact, kind: 'no_probe', issue: `'${f.fact}' carries no probe — add a frontmatter 'probe:' entry (when / run / asks): a search a future run cites as a '## Coupling' row, or a read-only inspection that answers the question this fact exists to raise. A fact that cannot be phrased as a command is a fact that will not be applied. If it genuinely has no command shape, say so in the body so this gap reads as a decision.` })
     }

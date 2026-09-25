@@ -44,6 +44,11 @@ starting over.
   diagnosing that from inside a stage has cost real runs whole sessions. Repair
   the tree first (the report names the fix command per check); a red gate after
   a green env report is about your diff.
+- A boundary block carrying a **BASE CHECK** line is not about your diff: it
+  means files you never touched are being reported because the run's base is
+  behind the branch this work sits on. Do not revert them and do not widen the
+  boundary around them — fix the base (`pipeline set-base <branch>`) and
+  re-advance; the reasons disappear with it.
 - If `advance` blocks on a profile check for reasons you cannot map to your
   own diff, follow the pipeline's **gate-triage** skill
   (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.

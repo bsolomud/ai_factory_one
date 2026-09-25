@@ -226,24 +226,33 @@ const commands = {
     // wrong base poisons every validator). An explicit flag always wins; otherwise
     // the stacked case is DETECTED rather than left to the developer to remember —
     // it was recorded as a knowledge fact and recurred anyway.
+    // The base is ASKED, never decided. An earlier cut of this auto-applied the
+    // detected branch, and it cost a run within two days: a developer standing
+    // on a personal wrap-up branch one commit ahead of the trunk had the run
+    // based on it, aborted, and recreated from master by hand. Detection cannot
+    // tell "the feature branch this work stacks on" from "the branch I happen to
+    // be standing on", and the framework proposal that started this asked for
+    // exactly what it says — *ask for or validate* the base at run creation.
+    // So: the profile convention stands, the candidate is surfaced, and the
+    // developer answers. Wrong-by-default is recoverable; wrong-by-guess is a
+    // recreated run.
     const profileBase = ctx.profile?.conventions?.base_branch || 'master'
-    let base = flags.base || profileBase
-    let baseNote = null
+    const base = flags.base || profileBase
+    let baseQuestion = null
+    let baseCandidate = null
     if (!flags.base) {
       const detected = detectBase(ctx.repoDir, profileBase)
       // A branch some OTHER active run already works on is a stale checkout, not
-      // a stack: basing on it would diff this run against that run's work.
+      // a stack — there is nothing to ask about.
       const claimedByAnother = detected.autodetected && detected.branch && listRuns(ctx.slug).some(r => {
         try {
           const s = readState(paths.runDir(ctx.slug, r.id))
           return s.stage !== 'DONE' && s.git?.branch === detected.branch
         } catch { return false }
       })
-      if (detected.autodetected && claimedByAnother) {
-        baseNote = `HEAD is on '${detected.branch}', which run(s) already in flight are working on — NOT treating this as a stacked run. Base stays '${profileBase}'; if this run really does stack on that work, say so with 'pipeline set-base ${detected.branch}'.`
-      } else if (detected.autodetected) {
-        base = detected.base
-        baseNote = detected.reason
+      if (detected.autodetected && !claimedByAnother) {
+        baseCandidate = detected.branch
+        baseQuestion = `This run is based on '${base}'. But HEAD is on '${detected.branch}', ${detected.ahead} commit(s) ahead of it. ASK THE DEVELOPER: does this task build ON that branch's work, or is it independent? If it builds on it, run 'pipeline set-base ${detected.branch} --run ${runId}' NOW — before any stage work. With the wrong base, "this change" spans that whole branch: the write-boundary check reports every file in it, lint is handed hundreds of foreign files, and targeted tests balloon into a suite run.`
       }
     }
     // Opt-in isolated working tree, so several runs can code in parallel without
@@ -265,13 +274,18 @@ const commands = {
     // only flags untracked files the run itself creates outside the plan. A fresh
     // worktree honestly has none — the run's tree, the run's baseline.
     const baselineUntracked = untrackedFiles(worktree || ctx.repoDir)
-    const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked, worktree })
+    // Where HEAD stood before the run touched anything — the reference that
+    // makes "was this file already different, or did this run change it?"
+    // answerable. Best-effort: an empty repo has no HEAD, and a run without
+    // this reference simply loses the wrong-base diagnostic, nothing else.
+    const startSha = headSha(worktree || ctx.repoDir)
+    const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked, worktree, startSha })
     if (flags.autonomy) state.autonomy = flags.autonomy
     writeState(runDir, state)
     // The full file list (not just a count) so a rebuilt state.json restores the
     // ambient baseline — otherwise a crash would re-flag the developer's scratch.
-    appendEvent(runDir, { event: 'run_created', run: runId, base, baseline_untracked: baselineUntracked })
-    if (baseNote && base !== profileBase) appendEvent(runDir, { event: 'base_autodetected', base, from: profileBase, reason: baseNote })
+    appendEvent(runDir, { event: 'run_created', run: runId, base, start_sha: startSha, baseline_untracked: baselineUntracked })
+    if (baseCandidate) appendEvent(runDir, { event: 'base_candidate', base, candidate: baseCandidate, question: baseQuestion })
     if (worktree) appendEvent(runDir, { event: 'worktree_created', path: worktree, base })
     // worktree_setup is surfaced, never executed: deps install can be slow,
     // credentialed, or interactive — the dispatcher/developer runs it.
@@ -283,7 +297,7 @@ const commands = {
       stage_prompt: paths.asset(config.stages[state.stage].prompt),
       run_dir: runDir,
       base,
-      ...(baseNote && { base_note: baseNote }),
+      ...(baseCandidate && { base_candidate: baseCandidate, base_question: baseQuestion }),
       ...(worktree && { worktree }),
       ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' })
     })
@@ -1349,6 +1363,14 @@ function envReport(ctx, flags) {
       ? `${failed.length} environment check(s) failed — repair the TREE before reading any gate result as a verdict on the change. ${failed.map(f => f.fix ? `${f.check}: ${f.fix}` : `${f.check}: no fix recorded`).join(' · ')}`
       : `the tree can run this repo's commands — a red gate from here is about the change, not the environment`
   }, failed.length ? 1 : 0)
+}
+
+function headSha(repoDir) {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir, encoding: 'utf8', stdio: 'pipe' }).trim() || null
+  } catch {
+    return null // no commits yet, or not a repo — the diagnostic simply won't be available
+  }
 }
 
 // The round currently taking findings, or null. Event-sourced like everything

@@ -237,6 +237,7 @@ export const validators = {
     // appeared DURING the run are the pipeline's responsibility.
     const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
     const reasons = []
+    const outOfPlan = []
     for (const file of files) {
       if (ambient.has(file)) continue
       if (matchesAny(file, noTouch)) {
@@ -247,8 +248,20 @@ export const validators = {
         || allowedTests.includes(file)
         || testDirs.some(d => file.startsWith(d))
       if (!isAllowed) {
+        outOfPlan.push(file)
         reasons.push(`working tree touches ${file}, which is outside the approved plan's '## Affected files' — revert it, or, if the change genuinely needs this file, widen the boundary on the record: 'pipeline amend-boundary ${file} --reason "<why this file is needed>"' (it appends to the plan's '## Amendments' and is audit-logged; the developer sees it at the gate)`)
       }
+    }
+    // The wrong-base signature, named at the moment it hurts. A run based on the
+    // trunk while its work stacks on a feature branch reports every file in that
+    // branch as out-of-plan — hundreds of reasons, none of them this run's doing,
+    // and a reader who does not already know this failure mode reads it as "my
+    // change is wildly out of scope". start_sha is what makes the distinction
+    // decidable: a file that has not changed since the run began was not touched
+    // by this run, whatever the diff against the base says.
+    const preexisting = untouchedSinceStart(ctx, outOfPlan)
+    if (preexisting.length) {
+      reasons.push(`BASE CHECK — ${preexisting.length} of the ${outOfPlan.length} out-of-plan file(s) above have not changed since this run started; this run did not touch them. They differ from the run base ('${ctx.state?.git?.base}') because that base is behind the branch this work sits on. Fix the base, not the files: 'pipeline set-base <the branch this run stacks on>'. Then re-run 'pipeline advance' — most of the reasons above should disappear. (Examples: ${preexisting.slice(0, 3).join(', ')}.)`)
     }
     return reasons.length ? { ok: false, reasons } : ok()
   },
@@ -661,6 +674,32 @@ function runEvidence(repoDir, argv) {
 }
 
 const countLines = out => out.split('\n').filter(l => l !== '').length
+
+// Of the given files, the ones identical to how they stood when the run began —
+// i.e. the run demonstrably did not touch them, committed or not. Empty (no
+// claim made) when the run has no recorded start point or git refuses: a
+// diagnostic that guesses is worse than one that stays quiet.
+function untouchedSinceStart(ctx, files) {
+  const start = ctx.state?.git?.start_sha
+  if (!start || files.length === 0) return []
+  try {
+    // No pathspec: one call, and no argv-length risk when the wrong base has
+    // produced hundreds of out-of-plan paths — which is exactly the case this
+    // diagnostic is for.
+    const changed = new Set(
+      execFileSync('git', ['diff', '--name-only', start], { cwd: ctx.repoDir, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+        .split('\n').map(f => f.trim()).filter(Boolean)
+    )
+    // An untracked file is invisible to `git diff`, so it would read as
+    // "unchanged since the run began" when in fact the run just created it.
+    // Ambient untracked files were filtered out by the caller; whatever is
+    // untracked here is the run's own work.
+    const untracked = new Set(ctxUntrackedFiles(ctx))
+    return files.filter(f => !changed.has(f) && !untracked.has(f))
+  } catch {
+    return []
+  }
+}
 
 const ok = () => ({ ok: true })
 const fail = reason => ({ ok: false, reasons: [reason] })

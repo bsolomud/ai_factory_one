@@ -239,6 +239,8 @@ commands:
     - name: assets built
       run: "test -f built.marker"
       fix: "./build-assets.sh"
+  worktree_setup:
+    - "./build-assets.sh"
 test_layout: { "src/**": "tests/" }
 conventions: { base_branch: master }
 no_touch: ["locked/**"]
@@ -269,6 +271,38 @@ test('doctor --env judges the TREE, and names the command that repairs it', () =
 
   // The schema doctor keeps working and now points at its environment sibling.
   assert.match(run(['doctor']).note, /--env/)
+})
+
+// The case the whole verb exists for. A run with its own worktree works THERE,
+// and that tree is the one that is missing the build output or the generated
+// config — while the main checkout, where the developer is standing, is fine.
+// Checking the wrong tree would report a green environment for a run that
+// cannot boot.
+test('doctor --env judges the RUN\'s worktree, not the checkout you are standing in', () => {
+  const { home, root, repo, run, runId } = startedRun('env-worktree-repo', { profile: ENV_PROFILE })
+  void root
+  // The main checkout is fully prepared…
+  repo.write('built.marker', 'ok\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'built')
+  assert.equal(run(['doctor', '--env']).verdict, 'OK')
+
+  // …and the run gets a fresh tree, which is not. The marker is committed, so a
+  // worktree DOES have it — remove it there to model the real case: build output
+  // and generated config are gitignored, so a fresh tree never has them.
+  run(['abort', '--no-harvest', 'restarting with a worktree'])
+  const created = cli(['new-run', 'W-9', '--worktree'], { home, cwd: repo.dir })
+  assert.equal(created.verdict, 'CREATED')
+  fs.rmSync(path.join(created.worktree, 'built.marker'))
+
+  // From the main checkout — which is prepared — the verdict is still about the
+  // run's tree.
+  const gaps = cli(['doctor', '--env', '--run', 'W-9'], { home, cwd: repo.dir })
+  assert.equal(gaps.verdict, 'ENV_GAPS')
+  assert.equal(gaps.workdir, created.worktree, 'checked the run\'s tree, not the cwd')
+  assert.equal(gaps.fresh_worktree, true)
+  assert.equal(gaps.checks[0].status, 'fail')
+  assert.ok(gaps.worktree_setup?.length, 'a fresh tree is told how to prepare itself')
+  void runId
 })
 
 test('permissions: rules derived from the repo\'s own verified commands, merged only on request', () => {

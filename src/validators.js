@@ -5,6 +5,7 @@ import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, boundaryAmen
 import { artifactFor } from './config.js'
 import { proofStamp } from './scan.js'
 import { isStacked } from './basehealth.js'
+import { claimRef, writtenClaims } from './claims.js'
 import { changedFiles, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
 import { readEvents, SKIP_KINDS } from './state.js'
 
@@ -362,14 +363,111 @@ export const validators = {
   // A PR opened before a decision changed still carries the old description
   // until it is re-published; 'pipeline pr-opened' after the body update is
   // the record that it was.
+  //
+  // The same holds for code changed in answer to review comments: a pilot PR
+  // kept listing a resolved question and lacked the QA re-check its new code
+  // needed. A feedback round after the PR was published, with the branch head
+  // moved since, means the body describes code that is gone.
   pr_body_current(ctx) {
     const events = readEvents(ctx.runDir)
     const lastPr = events.findLastIndex(e => e.event === 'pr_opened')
     if (lastPr === -1) return ok()
+    const n = events[lastPr].number
+    const reworked = events.slice(lastPr + 1).some(e => e.event === 'round_opened' && e.source === 'pr')
+    if (reworked && events[lastPr].head) {
+      let head = null
+      try { head = execFileSync('git', ['-C', ctx.repoDir, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { /* not a repo here */ }
+      if (head && head !== events[lastPr].head) {
+        return fail(`PR #${n} was published at ${events[lastPr].head.slice(0, 11)}; a review-feedback round changed the code since (now ${head.slice(0, 11)}). Re-render the PR body from the template for the code as it is now — what changed in this round, and a QA re-check list naming what a tester must try again — publish it ('gh pr edit ${n} --body-file …'), then 'pipeline pr-opened ${events[lastPr].url || n}'.`)
+      }
+    }
     const stale = events.slice(lastPr + 1).filter(e => e.event === 'decision_changed')
     if (!stale.length) return ok()
-    const n = events[lastPr].number
     return fail(`PR #${n} was published before the developer changed ${stale.length === 1 ? 'a decision' : `${stale.length} decisions`} (${stale.map(c => `"${c.was}" → "${c.now}"`).join('; ')}) — its body still describes the old one. Update it from the approved draft ('gh pr edit ${n} --body-file …'), then 'pipeline pr-opened ${events[lastPr].url || n}'.`)
+  },
+
+  // Every claim the change writes into a comment, a doc or a message — a line
+  // with a universal or outcome word — gets a row in '## Claims written':
+  // where | claim | proof | PR note. Proof is a test that was run or a command
+  // with its result (in backticks), "narrowed: <new wording>", or "Not
+  // verified" with a PR note that reaches Testing notes (untested_in_pr).
+  // See claims.js for why.
+  claims_written(ctx) {
+    const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
+    const claims = writtenClaims(ctx.repoDir, ctx.state?.git?.base || 'master', ctx.profile, ambient)
+    if (!claims.length) return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const shape = "| Where | Claim | Proof | PR note | — Where: `path:line` or `path:from-to`; Proof: the test you ran or the command and what it printed, in backticks, or 'narrowed: <the new wording>' after you rewrote the line to say only what is true, or 'Not verified' with a PR note"
+    const section = sections(artifact.body)['Claims written']
+    const list = claims.slice(0, 12).map(c => `${c.file}:${c.line} "${c.text.slice(0, 90)}"`).join('; ') + (claims.length > 12 ? `; … ${claims.length - 12} more` : '')
+    if (section === undefined) {
+      return fail(`the change writes ${claims.length} sentence(s) that a later reader will take as fact — comments, docs or messages saying "every", "only", "never", "updated" and the like — and nothing has checked them. Add '## Claims written' under '# Pipeline details' in ${rel}: ${shape}. Claims: ${list}`)
+    }
+    const table = tableRows(section)
+    const proofCol = columnIndex(table.header, /proof/, 2)
+    const noteCol = columnIndex(table.header, /note/, 3)
+    const rows = table.rows.map(r => ({ ref: claimRef(r[0] ?? ''), proof: (r[proofCol] ?? '').trim(), note: (r[noteCol] ?? '').trim() })).filter(r => r.ref)
+    const reasons = []
+    const missing = claims.filter(c => !rows.some(r => r.ref.file === c.file && c.line >= r.ref.from && c.line <= r.ref.to))
+    if (missing.length) {
+      reasons.push(`${missing.length} written claim(s) have no row in '## Claims written': ${missing.slice(0, 12).map(c => `${c.file}:${c.line} "${c.text.slice(0, 90)}"`).join('; ')}${missing.length > 12 ? ` … ${missing.length - 12} more` : ''}. ${shape}`)
+    }
+    for (const r of rows) {
+      const where = `${r.ref.file}:${r.ref.from}${r.ref.to !== r.ref.from ? `-${r.ref.to}` : ''}`
+      if (/^not verified/i.test(r.proof)) {
+        if (!r.note.replace(/[—–-]/g, '').trim()) reasons.push(`claim at ${where} is 'Not verified' but has no PR note — one plain sentence for the PR's Testing notes`)
+      } else if (!/`[^`]+`/.test(r.proof) && !/^narrowed\b/i.test(r.proof)) {
+        reasons.push(`claim at ${where}: Proof must show what was run (a test path or a command and its result, in backticks), or say 'narrowed: …' with the rewritten line, or 'Not verified' with a PR note — reading the code is how these claims shipped`)
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // A file whose name carries an ordered key that must be unique across every
+  // branch (a migration version): a pilot run hand-picked a round value, it
+  // collided with work merged meanwhile, the rename picked another round
+  // value, and that collided again after the PR opened — a fix push, a rename
+  // and a manual edit of a shared environment's database. The profile declares
+  // such files (keyed_files: glob + a regex whose first group is the key); this
+  // checks the change's new ones against each other and against the base TIP,
+  // fetched fresh, so a collision merged after the PR opened shows at CI.
+  keyed_file_collision(ctx) {
+    const specs = Array.isArray(ctx.profile?.keyed_files) ? ctx.profile.keyed_files : []
+    if (!specs.length) return ok()
+    const base = String(ctx.state?.git?.base || 'master').replace(/^origin\//, '')
+    const git = (...args) => {
+      try { return execFileSync('git', ['-C', ctx.repoDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }) } catch { return null }
+    }
+    git('fetch', '--quiet', 'origin', base)
+    const tipRef = git('rev-parse', '--verify', '--quiet', `origin/${base}`) ? `origin/${base}` : base
+    const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
+    const added = [
+      ...(git('diff', '--name-only', '--diff-filter=A', `${tipRef}...HEAD`) || '').split('\n'),
+      ...(git('diff', '--name-only', '--diff-filter=A', '--cached', 'HEAD') || '').split('\n'),
+      ...(git('ls-files', '--others', '--exclude-standard') || '').split('\n').filter(f => !ambient.has(f))
+    ].filter(Boolean)
+    const onTip = (git('ls-tree', '-r', '--name-only', tipRef) || '').split('\n').filter(Boolean)
+    const reasons = []
+    for (const spec of specs) {
+      const re = new RegExp(spec.key)
+      const keyOf = f => matchesAny(f, [spec.glob]) ? (path.basename(f).match(re) || [])[1] ?? null : null
+      const mine = new Map()
+      for (const f of new Set(added)) {
+        const k = keyOf(f)
+        if (k == null) continue
+        if (mine.has(k)) reasons.push(`${f} and ${mine.get(k)} in this change share the key ${k}`)
+        else mine.set(k, f)
+      }
+      for (const f of onTip) {
+        const k = keyOf(f)
+        if (k != null && mine.has(k) && mine.get(k) !== f) {
+          reasons.push(`${mine.get(k)} has the key ${k}, which ${f} on ${tipRef} already uses — generate a new key from the current clock (to the second; never a round value) and rename`)
+        }
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
   },
 
   // A finding the developer left unfixed is stated in the PR draft, in the
@@ -389,18 +487,23 @@ export const validators = {
 
   // The PR half of untested_claims: every 'Not verified' claim's PR note
   // appears in the PR draft's 'Testing notes', word for word.
+  // '## Claims written' rows marked 'Not verified' are carried the same way.
   untested_in_pr(ctx) {
     const reviewRel = artifactFor(ctx.config, '-review.md')
     const review = reviewRel && parseArtifact(artifactAbs(ctx, reviewRel))
-    const section = review && sections(review.body)['Untested claims']
-    if (!section) return ok()
-    const claims = tableRows(section)
-    const proofCol = columnIndex(claims.header, /proof/, 1)
-    const noteCol = columnIndex(claims.header, /note/, 2)
-    const notes = claims.rows
-      .filter(r => /^\s*not verified/i.test(r[proofCol] ?? ''))
-      .map(r => (r[noteCol] ?? '').trim())
-      .filter(n => n.replace(/[—–-]/g, '').trim())
+    if (!review) return ok()
+    const notes = []
+    for (const [name, proofAt, noteAt] of [['Untested claims', 1, 2], ['Claims written', 2, 3]]) {
+      const section = sections(review.body)[name]
+      if (!section) continue
+      const claims = tableRows(section)
+      const proofCol = columnIndex(claims.header, /proof/, proofAt)
+      const noteCol = columnIndex(claims.header, /note/, noteAt)
+      notes.push(...claims.rows
+        .filter(r => /^\s*not verified/i.test(r[proofCol] ?? ''))
+        .map(r => (r[noteCol] ?? '').trim())
+        .filter(n => n.replace(/[—–-]/g, '').trim()))
+    }
     if (!notes.length) return ok()
     const rel = ctx.stageDef.output
     const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
@@ -408,7 +511,7 @@ export const validators = {
     const testing = normClaim(sections(artifact.body)['Testing notes'] ?? '')
     const reasons = notes
       .filter(n => !testing.includes(normClaim(n)))
-      .map(n => `'## Testing notes' in ${rel} must carry this sentence word for word (${reviewRel}, Untested claims — nobody ran a test for it): "${n}"`)
+      .map(n => `'## Testing notes' in ${rel} must carry this sentence word for word (${reviewRel}, Untested claims or Claims written — nobody ran a test for it): "${n}"`)
     return reasons.length ? { ok: false, reasons } : ok()
   },
 

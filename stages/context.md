@@ -55,6 +55,11 @@ marker — the half above states the conclusion, the half below proves it.
 - Restate requirements in your own words; note what the task does NOT say.
 - Read the routed docs and code. EVERY finding carries a source citation
   (path). Mark each claim curated-doc-backed vs inferred.
+- **A ticket that cites an error-tracker notice**: read the whole error
+  group's totals (count, which clients or producers, what the payloads look
+  like) before describing the cause or the producer anywhere. One sample is
+  not the population; a pilot run named a producer from one notice, and the
+  reviewer found the group said otherwise.
 - **Ask the developer** everything needed to plan confidently: ambiguities,
   constraints, scope edges, and what "done" looks like. One batch, in chat.
 - From their answers, write `## Acceptance criteria` as a table

@@ -18,6 +18,12 @@ starting over.
   for commits, one commit per subtask with a message referencing it is the
   convention; otherwise leave the work uncommitted — they review and commit
   themselves.
+- **A file whose name carries an ordered key** (the profile's `keyed_files`,
+  e.g. a migration version): generate the key from the current clock, to the
+  second — never a round value such as a date with `120000`. Renaming to dodge
+  a collision, generate a fresh one the same way. Round values collide with
+  other branches that chose the same round value; a pilot run collided twice
+  this way. `keyed_file_collision` checks against the base tip at PR and CI.
 - **Check before you claim.** Run `pipeline check` when the subtask looks done:
   same validators as the gate, nothing recorded, no round-trip. `advance` is for
   certifying finished work, not for finding out what is wrong with it.

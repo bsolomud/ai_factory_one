@@ -93,6 +93,7 @@ stages:
       - review_counts
       - review_converged  # the last pre-PR round closed with nothing standing: advisory and pre-existing findings fixed, refuted, or deferred by the developer
       - untested_claims   # every 'not tested' row of the test report: a test that shows it, or 'Not verified' carried to the PR
+      - claims_written    # every comment, doc or message line the change adds that says "every/only/never/updated…": proven, narrowed, or 'Not verified' carried to the PR
       - skill_trace       # a repo-bound review skill is executed, not read: per-step trace citing code or commands
       - profile_command: lint_changed
       - profile_command: test_targeted
@@ -111,6 +112,7 @@ stages:
       - sections: [Title, Description, Testing notes, Ops notes, Reviewer guidance]
       - decisions_current # a decision the developer reversed is stated in the draft in its new words
       - deferred_in_pr    # each review finding the developer chose to leave is stated in the draft, word for word
+      - keyed_file_collision  # a new keyed file (profile keyed_files, e.g. ordered migrations) reuses no key on the base tip
       - untested_in_pr    # each 'Not verified' claim from the review reaches 'Testing notes' word for word
     gate: { required: true, human_required: true }   # push is irreversible → human even in express mode; approving unlocks push in the guard
     next: CI
@@ -123,7 +125,8 @@ stages:
       - human_part: [Where CI stands]
       - plain_language
       - sections: [Runs analyzed, Classification, Fixes, Outcome]
-      - pr_body_current   # a PR published before a decision changed has been re-published
+      - pr_body_current   # a PR published before a decision changed, or before review feedback changed the code, has been re-published
+      - keyed_file_collision  # re-checked against the base tip as it moves: a collision merged after the PR opened shows here
     gate: { required: true, human_required: true }   # CI fixes get pushed → human even in express mode
     next: SCRIBE
 

@@ -37,6 +37,13 @@ export function validateProfile(profile) {
 
   if ('no_touch' in profile && !Array.isArray(profile.no_touch)) errors.push("'no_touch' must be a list of globs")
   if ('test_layout' in profile && (typeof profile.test_layout !== 'object' || Array.isArray(profile.test_layout))) errors.push("'test_layout' must be a mapping of src-glob → test-dir")
+  if ('keyed_files' in profile) {
+    if (!Array.isArray(profile.keyed_files)) errors.push("'keyed_files' must be a list of { glob, key } — key is a regex on the file name whose first group is the key")
+    else for (const k of profile.keyed_files) {
+      if (!k || typeof k.glob !== 'string' || typeof k.key !== 'string') { errors.push("keyed_files: each entry needs 'glob' and 'key' strings"); continue }
+      try { if (!/\((?!\?:)/.test(k.key)) errors.push(`keyed_files: key '${k.key}' needs a capture group around the key`); new RegExp(k.key) } catch (e) { errors.push(`keyed_files: key '${k.key}' is not a valid regex: ${e.message}`) }
+    }
+  }
   if ('test_file_pattern' in profile) {
     if (typeof profile.test_file_pattern !== 'string') errors.push("'test_file_pattern' must be a string (a JS regex)")
     else try { new RegExp(profile.test_file_pattern) } catch (e) { errors.push(`'test_file_pattern' is not a valid regex: ${e.message}`) }

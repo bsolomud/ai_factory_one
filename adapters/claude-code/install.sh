@@ -27,6 +27,7 @@ node -e "console.log(JSON.parse(require('fs').readFileSync('$PACKAGE_ROOT/packag
 if [ -f "$PACKAGE_ROOT/dist/pipeline" ]; then
   cp "$PACKAGE_ROOT/dist/pipeline" "$PIPELINE_HOME/bin/pipeline"
   cp "$PACKAGE_ROOT/dist/guard" "$PIPELINE_HOME/bin/guard"
+  cp "$PACKAGE_ROOT/dist/vocabulary.json" "$PIPELINE_HOME/vocabulary.json"
 else
   printf '#!/usr/bin/env bash\nexec node "%s/bin/pipeline" "$@"\n' "$PACKAGE_ROOT" > "$PIPELINE_HOME/bin/pipeline"
   printf '#!/usr/bin/env bash\nexec node "%s/bin/guard" "$@"\n' "$PACKAGE_ROOT" > "$PIPELINE_HOME/bin/guard"

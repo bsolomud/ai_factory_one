@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { commandPrefix, currentBranch, loadProfile, matchesAny, resolveSlot } from './profile.js'
-import { appendEvent, readState } from './state.js'
+import { appendEvent, readEvents, readState } from './state.js'
 import * as paths from './paths.js'
 
 // PreToolUse hook: enforcement OUTSIDE the model. Exit 0 = allow,
@@ -51,6 +51,47 @@ export function guard(mode, input) {
   // Session bookkeeping modes run regardless of repo/run state.
   if (mode === 'mark') return markSession(input)
   if (mode === 'unmark') return unmarkSession(input)
+  const result = decide(mode, input)
+  if (mode === 'bash' && result.decision === 'allow') {
+    const context = reworkAdvice(input)
+    if (context) return { ...result, context }
+  }
+  return result
+}
+
+// Review fixes on a closed run's branch, outside a feedback round: two pilot
+// PRs took every post-PR fix this way, in plain sessions, and the feedback
+// procedure's rules never applied. Advice only — never a block — and in any
+// session, engaged or not, because that is where these commits are made.
+// Costs nothing unless the command really commits or pushes.
+function reworkAdvice(input) {
+  try {
+    const verbs = gitInvocations(input.tool_input?.command || '')
+    if (!verbs.includes('commit') && !verbs.includes('push')) return null
+    const repoDir = paths.gitRoot(input.cwd || process.cwd())
+    if (!repoDir) return null
+    const slug = paths.repoSlug(repoDir)
+    const runsDir = path.join(paths.repoHome(slug), 'runs')
+    const branch = currentBranch(repoDir)
+    if (!branch || !fs.existsSync(runsDir)) return null
+    for (const id of fs.readdirSync(runsDir)) {
+      const runDir = path.join(runsDir, id)
+      let state
+      try { state = readState(runDir) } catch { continue }
+      if (!['SCRIBE', 'DONE'].includes(state.stage) || state.git?.branch !== branch) continue
+      const events = readEvents(runDir)
+      const pr = events.filter(e => e.event === 'pr_opened').at(-1)
+      if (!pr) continue
+      const lastRound = events.filter(e => e.event === 'round_opened').at(-1)
+      const open = lastRound && !events.some(e => e.event === 'round_closed' && e.n === lastRound.n)
+      if (open && ['pr', 'ci'].includes(lastRound.source)) continue
+      return `This branch belongs to pipeline run ${id}, which already passed CI with PR #${pr.number} open. If this change answers review comments, record it as a feedback round first: 'pipeline round open pr --repo ${slug} --run ${id} --ref ${pr.url || pr.number}', then follow ~/.ai_factory_one/stages/pr-feedback.md (a coupling row per fix, re-prove the claims it touches, refresh the PR body), and 'pipeline round close' when done.`
+    }
+  } catch { /* advice only — never break a tool call */ }
+  return null
+}
+
+function decide(mode, input) {
   try {
     const cwd = input.cwd || process.cwd()
     const repoDir = paths.gitRoot(cwd)
@@ -334,6 +375,9 @@ export function main(argv, stdinText) {
   try { input = JSON.parse(stdinText || '{}') } catch { /* fail open */ }
   const result = guard(argv[0], input)
   if (result.decision === 'deny') process.stderr.write(result.message + '\n')
+  // Advice reaches the model as context; no permission decision is made, so
+  // the host's own permission rules still apply.
+  else if (result.context) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: result.context } }) + '\n')
   process.exitCode = result.exitCode
   return result
 }

@@ -67,6 +67,18 @@ machinery, not as an edit:
 - **Reopen to PLAN, not IMPLEMENT, when the fix changes a decision.** A
   `design-change` that re-enters at IMPLEMENT skips the critic and the coupling
   ledger, which are the two stages that would have caught it.
+- **Refresh the PR body after the rework.** When the round changed code, the
+  re-run PR stage re-renders the draft for the code as it now is: what this
+  round changed, any question it resolved removed, and a **QA re-check** list
+  in Testing notes naming what a tester must try again. Publish it and run
+  `pipeline pr-opened` again — `pr_body_current` blocks the CI gate until then.
+  A pilot PR kept a resolved question and lacked the re-check its new code needed.
+- **Fixes made outside this procedure still count.** If the developer already
+  committed review fixes in a plain session (`pipeline doctor` lists PRs that
+  moved after their run closed; the guard says so on commit), open the round
+  now, record those comments, and run the same rigor over the commits already
+  made: Coupling rows, re-proof, PR body. Two pilot PRs took every post-PR fix
+  that way, and that is where their later findings came from.
 - Draft replies (verbatim, ready to post) for answer-only and disputed rows.
 - On a later round: archive the prior round's Comments / Replies / Outcome
   into `## History` under a collapsed `<details>` block; keep the sections

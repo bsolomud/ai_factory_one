@@ -53,7 +53,7 @@ if [ -d "$PIPELINE_HOME" ]; then
     echo "purged pipeline home (including all profiles, runs, knowledge)"
   else
     rm -rf "$PIPELINE_HOME/bin" "$PIPELINE_HOME/stages" "$PIPELINE_HOME/templates" \
-           "$PIPELINE_HOME/pipeline.yml" "$PIPELINE_HOME/VERSION"
+           "$PIPELINE_HOME/pipeline.yml" "$PIPELINE_HOME/VERSION" "$PIPELINE_HOME/vocabulary.json"
     # If nothing but an empty repos/ (or nothing) remains, remove the home too.
     if [ -z "$(ls -A "$PIPELINE_HOME" 2>/dev/null)" ] || \
        { [ "$(ls -A "$PIPELINE_HOME" 2>/dev/null)" = "repos" ] && [ -z "$(ls -A "$PIPELINE_HOME/repos" 2>/dev/null)" ]; }; then

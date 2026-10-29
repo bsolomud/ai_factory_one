@@ -99,6 +99,29 @@ test('evidence_verified: only re-runnable read-only searches count as evidence',
   assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, true)
 })
 
+// Two pilot runs: a pipe in a pattern has more than one honest reading.
+// The gate accepts the row when any of them reproduces the count — and still
+// blocks when none does.
+test('evidence_verified: an alternation is re-run the way its author could have run it', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'ev-alt')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+
+  // BRE alternation, markdown-escaped in the cell exactly as typed in the shell.
+  planWith(ctx, coupling(['| x | `git grep -n "app-v1\\|util-v1" -- src` | 2 | fine |']))
+  assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, true, 'BRE \\| is an alternation, not a literal pipe')
+
+  // Plain grep, the pipe escaped only for the table — the agent's
+  // grep read it as alternation, the system grep reads it literally.
+  planWith(ctx, coupling(["| x | `grep -rn 'app-v1\\|util-v1' src` | 2 | fine |"]))
+  assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, true)
+
+  planWith(ctx, coupling(['| x | `git grep -n "app-v1\\|util-v1" -- src` | 5 | fine |']))
+  const bad = validators.evidence_verified(ctx, 'Coupling')
+  assert.equal(bad.ok, false, 'no reading gives 5')
+  assert.match(bad.reasons[0], /declares 5 hit\(s\).*read \d ways.*-e A -e B/s)
+})
+
 test('evidence_verified: a row missing its command, count or disposition is named individually', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'ev-rows')
@@ -130,13 +153,14 @@ test('evidence_verified: "None." costs a reason — the reason is the check', ()
 
 // ── ac_proofs ────────────────────────────────────────────────────────────────
 
-const AC_TWO = '| # | Criterion | Verified by | Population |\n|---|---|---|---|\n' +
-  '| 1 | greeting updates | app_test | both |\n| 2 | util untouched | manual | new |'
+const AC_TWO = '| # | Now | After this ships | How to check |\n|---|---|---|---|\n' +
+  '| 1 | old greeting | greeting updates | app_test |\n| 2 | util as is | util untouched | manual |'
+const AC_TWO_POPULATION = '| # | Population |\n|---|---|\n| 1 | both |\n| 2 | new |'
 
 function proofFixture(root, repoName) {
   const repo = standardRepo(root, repoName)
   const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/04-test-report.md' })
-  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', { 'Acceptance criteria': AC_TWO })
+  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', { 'Acceptance criteria': AC_TWO, 'Criteria population': AC_TWO_POPULATION })
   completeArtifact(ctx.runDir, 'artifacts/02-plan.md', 'E-1', 'PLAN', { 'Affected files': '- `src/app.sh`' })
   return { repo, ctx }
 }
@@ -209,36 +233,45 @@ test('ac_proofs: an unstamped ledger is told the exact value to paste', () => {
 
 // ── ac_population ────────────────────────────────────────────────────────────
 
-test('ac_population: a criterion with no population column blocks with the question it exists to force', () => {
+// The population answer lives below the marker, keyed by criterion number —
+// the developer's criteria table above it never carries the vocabulary term.
+const criteria = rows => '| # | Now | After this ships | How to check |\n|---|---|---|---|\n' + rows.join('\n')
+const population = rows => '| # | Population |\n|---|---|\n' + rows.join('\n')
+
+test('ac_population: a context with no population table blocks with the question it exists to force', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'pop-missing')
   const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/01-context.md' })
   completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', {
-    'Acceptance criteria': '| # | Criterion | Verified by |\n|---|---|---|\n| 1 | the form saves the mode | form spec |'
+    'Acceptance criteria': criteria(['| 1 | the mode is lost | the form saves the mode | form spec |']),
+    Requirements: 'r'
   })
   const result = validators.ac_population(ctx)
   assert.equal(result.ok, false)
-  assert.match(result.reasons[0], /AC#1 declares no Population/)
+  assert.match(result.reasons[0], /no '## Criteria population' section/)
   assert.match(result.reasons[0], /rows that are already broken/)
 })
 
-test('ac_population: the vocabulary is closed, and a valid table passes', () => {
+test('ac_population: every criterion needs a row, the vocabulary is closed, and a valid table passes', () => {
   const { root } = sandbox()
   const repo = standardRepo(root, 'pop-vocab')
   const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/01-context.md' })
-  const table = rows => '| # | Criterion | Verified by | Population |\n|---|---|---|---|\n' + rows.join('\n')
+  const three = criteria([
+    '| 1 | bulk schools never catch up | a school stored as bulk runs delta on its next sync | sync spec |',
+    '| 2 | new schools default to bulk | new schools default to delta | form spec |',
+    '| 3 | the copy reads "Bulk" | the copy reads "Delta" | manual |'
+  ])
 
   completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', {
-    'Acceptance criteria': table(['| 1 | x | spec | sometimes |'])
+    'Acceptance criteria': three, 'Criteria population': population(['| 1 | sometimes |', '| 2 | new |'])
   })
-  assert.match(validators.ac_population(ctx).reasons[0], /not one of: new \/ existing \/ both \/ n-a/)
+  const result = validators.ac_population(ctx)
+  assert.match(result.reasons[0], /AC#1 declares population 'sometimes', which is not one of: new \/ existing \/ both \/ n-a/)
+  assert.match(result.reasons[1], /AC#3 has no row in '## Criteria population'/)
+  assert.match(result.reasons[1], /records that are already wrong/)
 
   completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', {
-    'Acceptance criteria': table([
-      '| 1 | a school stored as bulk runs delta on its next sync | sync spec | both |',
-      '| 2 | new schools default to delta | form spec | new |',
-      '| 3 | the copy reads "Delta" | manual | n-a |'
-    ])
+    'Acceptance criteria': three, 'Criteria population': population(['| 1 | both |', '| 2 | new |', '| 3 | n-a |'])
   })
   assert.equal(validators.ac_population(ctx).ok, true)
 })
@@ -247,8 +280,8 @@ test('ac_population: an un-tabled criteria section blocks with the column layout
   const { root } = sandbox()
   const repo = standardRepo(root, 'pop-untabled')
   const ctx = ctxFor({ root, repoDir: repo.dir, output: 'artifacts/01-context.md' })
-  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', { 'Acceptance criteria': '1. it works' })
-  assert.match(validators.ac_population(ctx).reasons[0], /# \| Criterion \| Verified by \| Population/)
+  completeArtifact(ctx.runDir, 'artifacts/01-context.md', 'E-1', 'CONTEXT', { 'Acceptance criteria': 'it works', 'Criteria population': population(['| 1 | both |']) })
+  assert.match(validators.ac_population(ctx).reasons[0], /# \| Now \| After this ships \| How to check/)
 })
 
 // ── proof-stamp round trip ───────────────────────────────────────────────────

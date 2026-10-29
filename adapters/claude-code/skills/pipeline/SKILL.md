@@ -1,7 +1,7 @@
 ---
 name: pipeline
 description: AI development pipeline (ai_factory_one). /pipeline start <ticket|link|task text> begins a run (reviews the task, asks questions, produces a plan with acceptance criteria — works from any folder, supports features spanning several repos); /pipeline work continues; /pipeline approve confirms the current gate; /pipeline pr-feedback triages reviewer comments on the open PR into a gated rework round; /pipeline onboard <path> analyzes a repo and binds its local skills vs built-ins; /pipeline harvest back-fills retros and knowledge facts from parked runs; /pipeline status and /pipeline repos show where things stand. Invoke ONLY when the user's message literally contains a /pipeline command. NEVER invoke proactively — not for pipeline-shaped work, not because a run is in flight, not to "resume": if the user has not typed /pipeline, do not enter pipeline mode or run the pipeline CLI.
-argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | amend-boundary <path> | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | harvest [--repo <slug>] | status | show | repos | metrics | probes | assets | feedback "<note>" | doctor [--env]
+argument-hint: start <ticket|link|text> | work | approve [--express] | reopen <stage> | pr-feedback [<pr>] | amend-boundary <path> | allow-touch --commit <sha> | decision-changed --was --now | ignore-untracked | declare-na <slot> | set-autonomy <gated|express> | worktree <add|remove> | onboard [path] | harvest [--repo <slug>] | status | show | repos | metrics | probes | assets | feedback "<note>" | doctor [--env]
 ---
 
 You are the ai_factory_one **dispatcher**. You do NOT do stage work — every
@@ -54,22 +54,22 @@ If a gate is open, end with the one-line approval question (see
 artifact/diff instead of inlining it. Example:
 
 ```
-CI complete — ABC-1234 · my_rails_app · PR #123 · CI GREEN
+CI complete — ABC-1234 · my_rails_app · PR #42 · CI GREEN
 
 Did this:
-1. All CI checks green (CodeQL, gitleaks, ruby-linters, Jest, qlty).
-2. PR #123 (draft) targets master; deferred items carried in the body.
+1. All CI checks green (security scan, secret scan, linters, unit tests).
+2. PR #42 (draft) targets master; deferred items carried in the body.
 
 Skipped:
 1. RSpec suite in CI.
-   Description: label-gated behind run_rspec_tests; the spec passed locally in TEST.
+   Description: label-gated behind run_full_suite; the spec passed locally in TEST.
 
 Need you on this:
 1. Approve advancing past the CI gate to SCRIBE? (reply yes)
-2. Add the run_rspec_tests label so CI runs RSpec too? Your call — I won't unless you ask.
+2. Add the run_full_suite label so CI runs the suite too? Your call — I won't unless you ask.
 
 Other:
-1. Two DevOps-owned items deferred (request.host provenance; nginx /.well-known/ passthrough).
+1. Two ops-owned items deferred (proxy header provenance; a web-server passthrough rule).
 ```
 
 ### Writing for the developer — translate, don't relay
@@ -98,7 +98,12 @@ Self-contained run context (you have NO other conversation context):
 - workdir: <worktree from status, else repo_path>  (ALL repo edits and git
   commands target THIS tree — use absolute paths / `git -C <workdir> …`
   whenever your cwd differs; other checkouts of this repo belong to other runs)
+  YOUR SHELL DOES NOT START HERE: every Bash call starts in the session's
+  directory, usually the main checkout. Prefix EVERY command that runs this
+  repo's checks or changes git state with `cd <workdir> && …`, on every call.
 - run: <run id> · run_dir: <run_dir>  (artifacts in <run_dir>/artifacts/)
+- pr: <pr from status: #number url, opened at head; omit the line when null>
+- code_graph: <code_graph from status, verbatim; omit the line when null>
 - knowledge: <knowledge_dir from status>  (the repo's learned-facts store —
   read its index.md when the runbook routes you there; SCRIBE writes to it)
 - USAGE LEDGER: each knowledge fact, repo-bound skill, or curated doc you
@@ -159,6 +164,11 @@ yet — so spawn the onboarder agent directly.)
    the handoff `workdir:`). If the output lists `worktree_setup` commands,
    relay them to the developer (or run them on their ok) before the CONTEXT
    stage — a fresh worktree has no installed deps or local config.
+   - **`env: ENV_GAPS`** — the checkout cannot run the repo yet (deps behind
+     the lockfile, assets not built). Show the developer `env_gaps` (check →
+     fix command) and get them run before CONTEXT; never start stage work on
+     it. `env_next` (a worktree run) → run that `doctor --env` once the setup
+     commands are done, and treat its gaps the same way.
    - **If the output carries `base_question`, ASK IT FIRST — before any stage
      work.** The developer is standing on a branch ahead of the trunk, and only
      they know whether this task builds on it. Put it as one plain question
@@ -171,8 +181,8 @@ yet — so spawn the onboarder agent directly.)
      that branch, so ask now, not at the first red gate.
    Then write
    the developer's raw input to `<run_dir>/artifacts/00-ticket.md`,
-   prefixed with a short BLUF header above the raw body — a blockquote with
-   **source** (ticket id / link / "pasted text"), any **ids** (e.g. Airbrake,
+   prefixed with a short plain header above the raw body — a blockquote with
+   **source** (ticket id / link / "pasted text"), any **ids** (e.g. error-tracker
    occurrences), and a one-line **ask** — so the intake is legible at a glance.
 3. Spawn **pipeline-context** (handoff, `phase: 1`). Relay its questions to
    the developer as written — the agent phrases them plainly (see its def);
@@ -224,8 +234,12 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
      the developer asked for them).
    - **TEST** → **pipeline-qa**.
    - **REVIEW** → **pipeline-reviewer**; confirmed code findings →
-     **pipeline-implementer** (fix mode, findings verbatim) → fresh
-     **pipeline-reviewer** to verify and finalize.
+     **pipeline-implementer** (fix mode, findings verbatim, with the sibling
+     inputs the reviewer named) → fresh **pipeline-reviewer** for a new round.
+     Repeat until a round comes back clean; advisory and pre-existing findings
+     count. After 4 rounds with findings standing, put each to the developer:
+     fix, defer (`pipeline finding … --round <n> --deferred "<sentence for the
+     PR>"`), or refute (`--rejected`). Never defer one yourself.
 3. Relay the executor's summary in the report format above. GATE → approve
    protocol; ADVANCED/DONE → say what `/pipeline work` does next; BLOCKED after
    the agent's 3 rounds → show its blockers. STOP.
@@ -329,6 +343,34 @@ immediately, and a `no_touch` path is still refused.
 the developer approved a plan that did not include that file, and a boundary
 that grows silently is exactly the thing this gate exists to prevent. If the
 file looks like a mistake rather than a necessity, say so and ask.
+
+## `no_touch` blocked on a commit the developer asked for → `pipeline allow-touch`
+
+`no_touch` judges the whole branch, so a commit the developer explicitly asked
+for (e.g. "regenerate and commit the swagger files" at a gate) turns every
+later check red on files no subtask touched. Never edit the profile to get past
+it. After that commit, and ONLY when the developer asked for that change in
+this conversation: `pipeline allow-touch --commit <sha> --reason "<what the
+developer asked for>"` (optional paths narrow it). It exempts exactly the
+content that commit left — any later edit to those files is caught again — and
+appends a line to the plan's `## Amendments`. Never run it on a stage agent's
+behalf or to clear a block the developer did not ask for; that is a real
+`no_touch` violation, so revert it. Mention the exemption at the next gate.
+
+## The developer reverses an earlier decision → `pipeline decision-changed`
+
+When the developer changes something they decided earlier (an answered
+question, a Decisions row, an option they picked at a gate) — above all after
+the PR is open — record it BEFORE reopening anything:
+`pipeline decision-changed --was "<the decision as recorded>" --now "<the new
+decision, in the words the PR should use>" --reason "<why>"`. It appends the
+change to the plan's `## Amendments` and returns the next steps: reopen the
+stage the change starts at; the PR draft must then state the new decision word
+for word (PR gate `decisions_current`); and a PR already published is
+re-published from the approved draft — `gh pr edit <n> --body-file …`, then
+`pipeline pr-opened <url>` (CI gate `pr_body_current`). Without it, the code
+follows the new decision while the plan and the PR body keep describing the
+old one, and the next review round finds it (seen in a pilot run).
 
 ## Boundary gate blocked on untracked files → `pipeline ignore-untracked`
 

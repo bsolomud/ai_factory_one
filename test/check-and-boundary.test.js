@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { AC_TABLE, COUPLING_OK, STANDARD_PROFILE, cli, completeArtifact, installProfile, readState, sandbox, standardRepo } from './helpers.js'
+import { COUPLING_OK, STANDARD_PROFILE, artifactBody, cli, completeArtifact, contextSections, installProfile, readState, sandbox, standardRepo } from './helpers.js'
 
 // The dry run and the boundary amendment — the two verbs aimed at the pilot's
 // loudest number: 816 of 887 recorded block reasons were the write boundary,
@@ -22,7 +22,7 @@ function runAtImplement(name) {
 
   run(['new-run', 'C-1'])
   completeArtifact(runDir, 'artifacts/01-context.md', 'C-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.' })
+    contextSections())
   run(['advance']); run(['approve'])
   completeArtifact(runDir, 'artifacts/02-plan.md', 'C-1', 'PLAN', {
     Approach: 'a', 'Affected files': '- `src/app.sh`', Coupling: COUPLING_OK,
@@ -50,7 +50,7 @@ test('check: same validators, zero consequences — and the finalization stamp i
 
   // A real failure: an empty required section.
   fs.writeFileSync(path.join(runDir, 'artifacts/01-context.md'),
-    `---\nrun: C-1\nstage: CONTEXT\nstatus: draft\n---\n\n## Requirements\nr\n\n## Acceptance criteria\n${AC_TABLE}\n\n## Decisions\nd\n\n## Findings\nf\n\n## Open questions\n`)
+    `---\nrun: C-1\nstage: CONTEXT\nstatus: draft\n---\n\n${artifactBody('CONTEXT', contextSections({ Decisions: 'd', 'Open questions': '' }))}`)
   const red = run(['check'])
   assert.equal(red.verdict, 'RED')
   assert.equal(red.code, 1, 'a red dry run exits non-zero, like every other verdict this CLI gives')
@@ -65,7 +65,7 @@ test('check: same validators, zero consequences — and the finalization stamp i
   // Filled in, but still draft — the runbooks mandate `status: complete` as the
   // LAST edit, so this is the expected mid-work state, not a defect.
   fs.writeFileSync(path.join(runDir, 'artifacts/01-context.md'),
-    `---\nrun: C-1\nstage: CONTEXT\nstatus: draft\n---\n\n## Requirements\nr\n\n## Acceptance criteria\n${AC_TABLE}\n\n## Decisions\nd\n\n## Findings\nf\n\n## Open questions\nNone.\n`)
+    `---\nrun: C-1\nstage: CONTEXT\nstatus: draft\n---\n\n${artifactBody('CONTEXT', contextSections({ Decisions: 'd' }))}`)
   const pending = run(['check'])
   assert.equal(pending.verdict, 'GREEN')
   assert.equal(pending.code, 0)
@@ -74,7 +74,7 @@ test('check: same validators, zero consequences — and the finalization stamp i
   assert.match(pending.next_action, /status: complete/)
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'C-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'd', Findings: 'f', 'Open questions': 'None.' })
+    contextSections({ Decisions: 'd' }))
   const green = run(['check'])
   assert.equal(green.verdict, 'GREEN')
   assert.equal(green.pending_finalization.length, 0)
@@ -121,6 +121,45 @@ test('amend-boundary: a widening is appended, audited and honored — no_touch s
   assert.match(events, /"reason":"the greeting helper moved here"/)
 })
 
+// A pilot run: the developer asked for generated files under no_touch to be
+// regenerated and committed; base..HEAD then failed every later check, and the
+// only way out was deleting the rule from the profile by hand.
+test('allow-touch: a developer-authorized commit is exempt from no_touch — exactly its content, nothing after', () => {
+  const { repo, run, runDir } = runAtImplement('touch-repo')
+  repo.write('src/app.sh', 'echo app-v2\n')
+  repo.git('commit', '-qam', 'app')
+  const appSha = repo.git('rev-parse', 'HEAD').trim()
+  repo.write('locked/keep.txt', 'regenerated at the developer\'s request\n')
+  repo.git('add', 'locked/keep.txt')
+  repo.git('commit', '-qm', 'regen')
+  const sha = repo.git('rev-parse', 'HEAD').trim()
+
+  const red = run(['advance'])
+  assert.equal(red.verdict, 'BLOCKED', 'no_touch judges the whole branch')
+  assert.match(red.reasons.join(' '), /locked\/keep\.txt.*no_touch.*pipeline allow-touch --commit/, 'the block names the way out')
+
+  assert.equal(run(['allow-touch', '--commit', sha]).verdict, 'ERROR', 'no reason → refused')
+  assert.equal(run(['allow-touch', '--commit', 'nope', '--reason', 'r']).verdict, 'ERROR', 'unknown commit → refused')
+  assert.equal(run(['allow-touch', 'src/app.sh', '--commit', sha, '--reason', 'r']).verdict, 'ERROR', 'a path the commit did not change → refused')
+  assert.equal(run(['allow-touch', '--commit', appSha, '--reason', 'r']).verdict, 'ERROR', 'a commit with no no_touch path → nothing to exempt')
+
+  const ok = run(['allow-touch', '--commit', sha, '--reason', 'developer asked to regenerate keep.txt'])
+  assert.equal(ok.verdict, 'OK')
+  assert.deepEqual(ok.exempt, ['locked/keep.txt'])
+  assert.match(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), /"event":"touch_allowed"/)
+  assert.match(fs.readFileSync(path.join(runDir, 'artifacts/02-plan.md'), 'utf8'), /## Amendments[\s\S]*- no_touch exemption at commit `[0-9a-f]{11}`: `locked\/keep\.txt` — developer asked/)
+  assert.equal(run(['check']).checks.find(c => c.check === 'git_clean_within')?.status, 'pass', 'exempt while the content matches the commit')
+
+  // An edit on top of the authorized content is the pipeline's own — caught again.
+  repo.write('locked/keep.txt', 'hand-edited afterwards\n')
+  const again = run(['check'])
+  assert.equal(again.checks.find(c => c.check === 'git_clean_within')?.status, 'fail')
+  assert.ok(again.blocking.some(r => /locked\/keep\.txt.*no_touch/.test(r)), 'the block names the edited file')
+
+  // amend-boundary still refuses no_touch — the exemption is a separate, commit-keyed verb.
+  assert.equal(run(['amend-boundary', 'locked/keep.txt', '--reason', 'x']).verdict, 'BLOCKED')
+})
+
 // The failure this diagnostic exists for: a run based on the trunk whose work
 // stacks on a feature branch reports every file in that branch as out-of-plan.
 // Hundreds of reasons, none of them the run's doing — and unreadable as such by
@@ -143,7 +182,7 @@ test('the boundary block names a wrong base instead of blaming the change', () =
   // was surfaced and, as happens, nobody answered it.
   assert.equal(run(['new-run', 'W-1']).base, 'master')
   completeArtifact(runDir, 'artifacts/01-context.md', 'W-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'd', Findings: 'f', 'Open questions': 'None.' })
+    contextSections({ Decisions: 'd' }))
   run(['advance']); run(['approve'])
   completeArtifact(runDir, 'artifacts/02-plan.md', 'W-1', 'PLAN', {
     Approach: 'a', 'Affected files': '- `src/app.sh`', Coupling: COUPLING_OK,
@@ -196,7 +235,7 @@ test('amend-boundary refuses while the plan is still being written', () => {
   const runDir = path.join(home, 'repos', slug, 'runs', 'P-1')
   run(['new-run', 'P-1'])
   completeArtifact(runDir, 'artifacts/01-context.md', 'P-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'd', Findings: 'f', 'Open questions': 'None.' })
+    contextSections({ Decisions: 'd' }))
   run(['advance']); run(['approve'])
   assert.equal(readState(runDir).stage, 'PLAN')
   const r = run(['amend-boundary', 'src/util.sh', '--reason', 'why not'])

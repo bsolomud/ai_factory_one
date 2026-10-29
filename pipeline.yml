@@ -9,6 +9,8 @@ stages:
     output: artifacts/01-context.md
     validate:
       - artifact_complete: artifacts/01-context.md
+      - human_part: ["What we're doing", Why, What changes, Acceptance criteria]   # the developer's half: above the "# Pipeline details" marker, one screen, plain words
+      - plain_language   # no pipeline vocabulary above the marker — the reader is a junior developer who has never seen the pipeline
       - sections: [Requirements, Acceptance criteria, Decisions, Findings, Open questions]
       - ac_population   # every criterion names the population it is about — the question that separates a shipped fix from a fix to the writer only
     gate: { required: true }
@@ -21,6 +23,8 @@ stages:
     critic: { agent: pipeline-critic, prompt: stages/plan-critic.md, max_rounds: 2 }
     validate:
       - artifact_complete: artifacts/02-plan.md
+      - human_part: ["What we're doing", Why, "How we'll build it"]
+      - plain_language
       - sections: [Approach, Affected files, Coupling, Risks, Subtasks, Testing strategy, Open questions]
       - files_exist_in_repo: Affected files
       - evidence_verified: Coupling   # the gate re-runs each row's search and compares the hit count — a claim that cannot survive its own command is not evidence
@@ -34,6 +38,8 @@ stages:
     output: artifacts/03-progress.md
     validate:
       - artifact_complete: artifacts/03-progress.md
+      - human_part: [Where we are]
+      - plain_language
       - sections: [Subtasks, Deviations]
       - substate_set: [subtask, of]
       - subtask_coupling   # re-checked: a plan amendment between gates must not smuggle a coupling split past BREAKDOWN
@@ -58,8 +64,11 @@ stages:
     output: artifacts/04-test-report.md
     validate:
       - artifact_complete: artifacts/04-test-report.md
+      - human_part: [What we checked]
+      - plain_language
       - sections: [Coverage audit, Risk-to-test map, Added tests, Deferred]
       - ac_traceability
+      - base_health # a stacked run asked its base's own CI before calling a failure pre-existing
       - ac_proofs   # each criterion's test was WATCHED to fail without the fix, and the ledger expires when the code under test changes
       - profile_command: lint_changed
       - profile_command: test_targeted
@@ -74,12 +83,17 @@ stages:
     prompt: stages/review.md
     inputs: [artifacts/02-plan.md]
     output: artifacts/05-review.md
-    critic: { agent: pipeline-reviewer, max_rounds: 2 }
+    critic: { agent: pipeline-reviewer, max_rounds: 4 }   # until a round comes back clean; still findings after 4 → the developer decides
     validate:
       - artifact_complete: artifacts/05-review.md
+      - human_part: [What we found]
+      - plain_language
       - sections: [Blind pass, Findings, Coupling, Fixes applied, Disputed, Plan-vs-shipped check]
       - evidence_verified: Coupling   # re-checked at REVIEW: the fix loop moves code, and a coupling row proved at PLAN may no longer hold
       - review_counts
+      - review_converged  # the last pre-PR round closed with nothing standing: advisory and pre-existing findings fixed, refuted, or deferred by the developer
+      - untested_claims   # every 'not tested' row of the test report: a test that shows it, or 'Not verified' carried to the PR
+      - skill_trace       # a repo-bound review skill is executed, not read: per-step trace citing code or commands
       - profile_command: lint_changed
       - profile_command: test_targeted
       - no_secrets   # re-scan the full branch: review-loop fixes can add lines after the last subtask gate
@@ -92,7 +106,12 @@ stages:
     output: artifacts/06-pr-draft.md
     validate:
       - artifact_complete: artifacts/06-pr-draft.md
+      - human_part: [Title, Description, Testing notes, Ops notes, Reviewer guidance]   # the whole PR draft is read by people — no marker, the budget and vocabulary rules cover all of it
+      - plain_language
       - sections: [Title, Description, Testing notes, Ops notes, Reviewer guidance]
+      - decisions_current # a decision the developer reversed is stated in the draft in its new words
+      - deferred_in_pr    # each review finding the developer chose to leave is stated in the draft, word for word
+      - untested_in_pr    # each 'Not verified' claim from the review reaches 'Testing notes' word for word
     gate: { required: true, human_required: true }   # push is irreversible → human even in express mode; approving unlocks push in the guard
     next: CI
 
@@ -101,7 +120,10 @@ stages:
     output: artifacts/07-ci-analysis.md
     validate:
       - artifact_complete: artifacts/07-ci-analysis.md
+      - human_part: [Where CI stands]
+      - plain_language
       - sections: [Runs analyzed, Classification, Fixes, Outcome]
+      - pr_body_current   # a PR published before a decision changed has been re-published
     gate: { required: true, human_required: true }   # CI fixes get pushed → human even in express mode
     next: SCRIBE
 
@@ -110,6 +132,8 @@ stages:
     output: artifacts/08-retro.md
     validate:
       - artifact_complete: artifacts/08-retro.md
+      - human_part: [What we learned]
+      - plain_language
       - sections: [Plan-vs-shipped, Learnings, Routing]
     gate: { required: true }
     next: DONE

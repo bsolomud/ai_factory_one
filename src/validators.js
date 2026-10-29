@@ -1,11 +1,12 @@
 import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, boundaryAmendments, parseArtifact, sections, pathsInSection } from './artifacts.js'
+import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, boundaryAmendments, humanPart, parseArtifact, sections, pathsInSection } from './artifacts.js'
 import { artifactFor } from './config.js'
 import { proofStamp } from './scan.js'
-import { changedFiles, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
-import { SKIP_KINDS } from './state.js'
+import { isStacked } from './basehealth.js'
+import { changedFiles, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
+import { readEvents, SKIP_KINDS } from './state.js'
 
 // Every validator: (ctx, param) → {ok:true} | {ok:false, reasons:[...]} | {skip:true, reason}.
 // Failure strings are instructions a model can act on — they land in Claude's
@@ -25,6 +26,26 @@ const ctxChangedFiles = (ctx, opts = {}) => {
 }
 const ctxUntrackedFiles = ctx => (ctx._memo ??= {}).untracked ??= untrackedFiles(ctx.repoDir)
 
+// no_touch exemptions recorded by `pipeline allow-touch` (read from the audit
+// log, which only the CLI writes). A file is exempt while its working-tree
+// content still equals what the authorized commit left — the exemption covers
+// the developer's change, never an edit made on top of it.
+function touchExemptions(ctx) {
+  const shas = new Map()
+  for (const e of readEvents(ctx.runDir)) {
+    if (e.event !== 'touch_allowed' || !e.commit) continue
+    for (const p of e.paths || []) shas.set(p, [...(shas.get(p) || []), e.commit])
+  }
+  return file => (shas.get(file) || []).some(sha => {
+    try {
+      execFileSync('git', ['diff', '--quiet', sha, '--', file], { cwd: ctx.repoDir, stdio: 'pipe' })
+      return true
+    } catch {
+      return false // differs from the authorized content, or the commit is gone
+    }
+  })
+}
+
 export const validators = {
 
   artifact_complete(ctx, rel) {
@@ -36,6 +57,28 @@ export const validators = {
     const status = artifact.frontmatter?.status
     if (status !== 'complete') {
       return fail(`artifact ${rel} has frontmatter status '${status ?? 'missing'}' — finish the stage's work, then set 'status: complete' as your LAST edit to the file`)
+    }
+    return ok()
+  },
+
+  // A stacked run asks its base's own CI before calling a failure
+  // pre-existing. A pilot run: 45 failures inherited from a red base were logged
+  // as "pre-existing" untied to the base, then re-diagnosed from scratch at CI.
+  // Runs on the trunk owe nothing; an UNKNOWN answer is an answer.
+  base_health(ctx) {
+    const trunk = ctx.profile?.conventions?.base_branch || 'master'
+    const base = ctx.state?.git?.base
+    if (!isStacked(base, trunk)) return ok()
+    const last = readEvents(ctx.runDir).filter(e => e.event === 'base_health').at(-1)
+    if (!last || last.base !== base) {
+      return fail(`this run stacks on '${base}', not '${trunk}' — run 'pipeline base-health' and read it before classifying any failing test as pre-existing: a red base explains failures this change did not cause`)
+    }
+    if (last.verdict !== 'RED') return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    const section = artifact && sections(artifact.body)['Base health']
+    if (!section) {
+      return fail(`the base '${base}' is red on its own CI — add '## Base health' to ${rel}: which failures also fail on the base (with the CI link), so they read as "base red", not as this change`)
     }
     return ok()
   },
@@ -214,6 +257,215 @@ export const validators = {
     return ok()
   },
 
+  // Review until a round comes back clean, not until nothing is "blocking".
+  // A pilot run: the pre-PR reviewer found a 500 on invalid UTF-8, filed it as
+  // "advisory, pre-existing", and the gate let it through — it was the PR
+  // reviewer's first comment. Measured 2026-10-29: the developer whose PRs
+  // merge without comments runs a review → fix → fresh review loop until a
+  // round finds nothing, with the same grader that later reviews ours. So the
+  // last pre-PR round must close with no finding left standing: each is fixed
+  // (and a fresh round confirms it), refuted (--rejected), or deferred by the
+  // developer with a sentence the PR carries (--deferred, deferred_in_pr).
+  review_converged(ctx) {
+    const events = readEvents(ctx.runDir)
+    const opened = events.filter(e => e.event === 'round_opened')
+    if (!opened.length) {
+      return fail(`no review round is recorded — 'pipeline round open pre-pr', record each finding with 'pipeline finding', then 'pipeline round close'`)
+    }
+    const last = opened.at(-1)
+    if (last.source !== 'pre-pr') {
+      return fail(`the latest round is round ${last.n} (${last.source} feedback) — the code changed since the last pre-PR review. Open a fresh one ('pipeline round open pre-pr') with a new reviewer over the whole diff`)
+    }
+    if (!events.some(e => e.event === 'round_closed' && e.n === last.n)) {
+      return fail(`review round ${last.n} is still open — record its findings, then 'pipeline round close'`)
+    }
+    // The latest record of a finding wins: the developer's later --deferred, or
+    // a refutation, settles one recorded earlier in the same round.
+    const latest = new Map()
+    for (const e of events.filter(e => e.event === 'finding_recorded' && e.round === last.n)) latest.set(normClaim(e.summary), e)
+    const standing = [...latest.values()].filter(e => !['rejected', 'deferred'].includes(e.disposition))
+    if (!standing.length) return ok()
+    return fail(`review round ${last.n} closed with ${standing.length} finding(s) still standing — advisory and pre-existing ones included, because the PR reviewer will raise them all: ${standing.map(f => `"${f.summary.slice(0, 90)}"`).join('; ')}. Fix them and run a fresh review round until one comes back clean (a nit's fix in a round of its own). A finding that is not real: record it again with the same --summary, --round ${last.n} and --rejected. One the developer chooses to leave: the same, with --deferred "<plain sentence for the PR>"`)
+  },
+
+  // A pilot run: the test report said "not tested because it is accepted
+  // behaviour" about what a single-user sync does; REVIEW re-read the code,
+  // agreed, and the PR body repeated the claim. It was wrong, and the developer
+  // found it after the CI gate. A row the test report leaves untested is a claim
+  // about behaviour, and REVIEW is the last pair of eyes before a reviewer reads
+  // it as fact. So each one gets a row in '## Untested claims': a test file
+  // that shows the behaviour, or 'Not verified' plus a plain sentence the PR
+  // must carry (untested_in_pr). Never a block on the claim being unproven —
+  // only on it being unaccounted for.
+  untested_claims(ctx) {
+    const reportRel = artifactFor(ctx.config, '-test-report.md')
+    const report = reportRel && parseArtifact(artifactAbs(ctx, reportRel))
+    if (!report) return ok() // no test report, no untested rows to account for
+    const map = tableRows(sections(report.body)['Risk-to-test map'])
+    const riskCol = 0
+    const coverageCol = columnIndex(map.header, /coverage/, map.header.length - 1)
+    const untested = map.rows
+      .filter(r => /^\s*not tested/i.test(r[coverageCol] ?? ''))
+      .map(r => r[riskCol] ?? '')
+      .filter(Boolean)
+    if (!untested.length) return ok()
+
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const section = sections(artifact.body)['Untested claims']
+    const shape = `| Claim | Proof | PR note | — Claim: the test report's Risk cell, same wording; Proof: the repo-relative path of a test file you ran that shows the behaviour (e.g. \`spec/models/x_spec.rb:12\`), or 'Not verified'; PR note: for 'Not verified', one plain sentence for the PR's 'Testing notes', copied there word for word`
+    if (section === undefined) {
+      return fail(`${reportRel} leaves ${untested.length} row(s) 'not tested', and each is a claim a PR reviewer will read as fact. Add '## Untested claims' under '# Pipeline details' in ${rel}: ${shape}. Check each claim against the code by RUNNING something, not by reading.`)
+    }
+    const claims = tableRows(section)
+    const proofCol = columnIndex(claims.header, /proof/, 1)
+    const noteCol = columnIndex(claims.header, /note/, 2)
+    const reasons = []
+    for (const risk of untested) {
+      const row = claims.rows.find(r => normClaim(r[0] ?? '').includes(normClaim(risk)))
+      if (!row) {
+        reasons.push(`'## Untested claims' has no row for "${risk.slice(0, 100)}" (${reportRel}: not tested). Add it: ${shape}`)
+        continue
+      }
+      const proof = (row[proofCol] ?? '').trim()
+      if (/^not verified/i.test(proof)) {
+        if (!(row[noteCol] ?? '').replace(/[—–-]/g, '').trim()) {
+          reasons.push(`"${risk.slice(0, 80)}" is 'Not verified' but has no PR note — write one plain sentence the PR's 'Testing notes' will carry, so the PR reviewer knows this was not checked`)
+        }
+        continue
+      }
+      const tests = backtickPaths(proof).filter(p => isTestFile(p, ctx.profile) && fs.existsSync(path.join(ctx.repoDir, p)))
+      if (!tests.length) {
+        reasons.push(`"${risk.slice(0, 80)}": Proof must name an existing test file by its repo-relative path in backticks (got "${proof.slice(0, 80)}"), or say 'Not verified' and give a PR note. Reading the code is not proof — a pilot run's false claim survived exactly that.`)
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // Every decision the developer reversed is stated in the PR draft, in the
+  // words recorded with it (a pilot run: the PR body described the
+  // reversed behaviour for a whole review round).
+  decisions_current(ctx) {
+    const changes = readEvents(ctx.runDir).filter(e => e.event === 'decision_changed')
+    if (!changes.length) return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const body = normClaim(artifact.body)
+    const reasons = changes
+      .filter(c => !body.includes(normClaim(c.now)))
+      .map(c => `the developer changed a decision ("${c.was}" → "${c.now}"), but ${rel} does not say "${c.now}" — state the new decision in the Description word for word, and remove what still describes the old one`)
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // A PR opened before a decision changed still carries the old description
+  // until it is re-published; 'pipeline pr-opened' after the body update is
+  // the record that it was.
+  pr_body_current(ctx) {
+    const events = readEvents(ctx.runDir)
+    const lastPr = events.findLastIndex(e => e.event === 'pr_opened')
+    if (lastPr === -1) return ok()
+    const stale = events.slice(lastPr + 1).filter(e => e.event === 'decision_changed')
+    if (!stale.length) return ok()
+    const n = events[lastPr].number
+    return fail(`PR #${n} was published before the developer changed ${stale.length === 1 ? 'a decision' : `${stale.length} decisions`} (${stale.map(c => `"${c.was}" → "${c.now}"`).join('; ')}) — its body still describes the old one. Update it from the approved draft ('gh pr edit ${n} --body-file …'), then 'pipeline pr-opened ${events[lastPr].url || n}'.`)
+  },
+
+  // A finding the developer left unfixed is stated in the PR draft, in the
+  // sentence recorded with it — the PR reviewer reads it from the author.
+  deferred_in_pr(ctx) {
+    const notes = readEvents(ctx.runDir).filter(e => e.event === 'finding_recorded' && e.disposition === 'deferred' && e.pr_note)
+    if (!notes.length) return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const body = normClaim(artifact.body)
+    const reasons = [...new Set(notes.map(n => n.pr_note))]
+      .filter(note => !body.includes(normClaim(note)))
+      .map(note => `a review finding was left unfixed on the developer's call, but ${rel} does not say so — put this under 'Reviewer guidance', word for word: "${note}"`)
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // The PR half of untested_claims: every 'Not verified' claim's PR note
+  // appears in the PR draft's 'Testing notes', word for word.
+  untested_in_pr(ctx) {
+    const reviewRel = artifactFor(ctx.config, '-review.md')
+    const review = reviewRel && parseArtifact(artifactAbs(ctx, reviewRel))
+    const section = review && sections(review.body)['Untested claims']
+    if (!section) return ok()
+    const claims = tableRows(section)
+    const proofCol = columnIndex(claims.header, /proof/, 1)
+    const noteCol = columnIndex(claims.header, /note/, 2)
+    const notes = claims.rows
+      .filter(r => /^\s*not verified/i.test(r[proofCol] ?? ''))
+      .map(r => (r[noteCol] ?? '').trim())
+      .filter(n => n.replace(/[—–-]/g, '').trim())
+    if (!notes.length) return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const testing = normClaim(sections(artifact.body)['Testing notes'] ?? '')
+    const reasons = notes
+      .filter(n => !testing.includes(normClaim(n)))
+      .map(n => `'## Testing notes' in ${rel} must carry this sentence word for word (${reviewRel}, Untested claims — nobody ran a test for it): "${n}"`)
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // A pilot run: the first REVIEW agent "applied" the bound team review skill by
+  // reading it and writing a generic review; the developer had to ask for a
+  // real pass, which then found a blocking false claim. When the profile binds
+  // a repo review skill, the review shows what it did with each step it ran:
+  // '## Team skill trace' (| Step | What the skill asks | What I did |), every
+  // 'What I did' citing a file:line or a command, the skill recorded as used,
+  // and each skill file the trace cites recorded too.
+  skill_trace(ctx) {
+    const binding = ctx.profile?.bindings?.review
+    if (binding?.source !== 'repo' || !binding.path) return ok()
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const section = sections(artifact.body)['Team skill trace']
+    const shape = `| Step | What the skill asks | What I did |, one row per step of \`${binding.path}\` you executed, each 'What I did' citing a \`file:line\` or a \`command\` you ran`
+    if (section === undefined) {
+      return fail(`this repo binds its own review skill (${binding.path}) — execute it, do not just read it. Add '## Team skill trace' under '# Pipeline details' in ${rel}: ${shape}`)
+    }
+    const trace = tableRows(section)
+    if (!trace.rows.length) return fail(`'## Team skill trace' in ${rel} has no rows — ${shape}`)
+    const reasons = []
+    const didCol = columnIndex(trace.header, /did/, trace.header.length - 1)
+    for (const row of trace.rows) {
+      if (/verdict/i.test(row[0] ?? '')) continue // the verdict sums up the cited steps; it has nothing of its own to cite
+      if (!/`[^`]+`/.test(row[didCol] ?? '')) {
+        reasons.push(`'## Team skill trace' step "${(row[0] ?? '').slice(0, 60)}": 'What I did' cites nothing — name the \`file:line\` it was applied to or the \`command\` you ran`)
+      }
+    }
+    const used = readEvents(ctx.runDir)
+      .filter(e => e.event === 'asset_used' && e.kind === 'skill' && e.stage === 'REVIEW')
+      .map(e => normRef(e.ref))
+    const skillRef = normRef(binding.path)
+    if (!used.some(u => u === skillRef || u.startsWith(skillRef + '/'))) {
+      reasons.push(`the bound review skill was not recorded — run 'pipeline used skill ${binding.path}'`)
+    }
+    const skillDir = path.join(ctx.repoDir, binding.path)
+    const cited = new Set()
+    for (const line of section.split('\n')) {
+      for (const m of line.matchAll(/`([^`\s]+\.md)(:\d+(-\d+)?)?`/g)) {
+        const name = m[1].replace(/^\.\//, '')
+        const inSkill = [path.join(skillDir, name), path.join(ctx.repoDir, name)]
+          .find(p => p.startsWith(skillDir + path.sep) && fs.existsSync(p))
+        if (inSkill) cited.add(path.relative(ctx.repoDir, inSkill))
+      }
+    }
+    for (const file of cited) {
+      const ref = normRef(file)
+      if (!used.some(u => u === ref || ref.endsWith('/' + u) || u.endsWith('/' + path.basename(ref)))) {
+        reasons.push(`the trace cites ${file} but it was not recorded — run 'pipeline used skill ${file}'`)
+      }
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
   git_clean_within(ctx) {
     const planRel = artifactFor(ctx.config, '-plan.md')
     if (!planRel) return fail(`cannot enforce the write boundary: no stage in pipeline.yml outputs a '-plan.md' artifact`)
@@ -236,12 +488,14 @@ export const validators = {
     // no_touch: an untracked file has no diff to inspect). Only untracked files that
     // appeared DURING the run are the pipeline's responsibility.
     const ambient = new Set(ctx.state?.git?.baseline_untracked || [])
+    const exempt = touchExemptions(ctx)
     const reasons = []
     const outOfPlan = []
     for (const file of files) {
       if (ambient.has(file)) continue
       if (matchesAny(file, noTouch)) {
-        reasons.push(`working tree touches ${file}, which matches a no_touch rule in the repo profile — revert this change; the pipeline must never modify it`)
+        if (exempt(file)) continue
+        reasons.push(`working tree touches ${file}, which matches a no_touch rule in the repo profile — revert this change; the pipeline must never modify it. If the developer explicitly asked for this change and it is committed: 'pipeline allow-touch --commit <sha> --reason "<what they asked for>"' exempts exactly that commit's content`)
         continue
       }
       const isAllowed = affected.some(a => file === a || file.startsWith(a.endsWith('/') ? a : a + '/'))
@@ -379,14 +633,14 @@ export const validators = {
       return fail(`'## ${sectionName}' in ${rel} records no evidence rows — write it as a table (Subject | Evidence command | Hits | Disposition) where the command is a read-only search (git grep / grep / rg) and Hits is the number of lines it prints. The gate RE-RUNS each command and compares.`)
     }
     const reasons = []
-    for (const { subject, command, hits, disposition, line } of rows) {
+    for (const { subject, command, rawCommand, hits, disposition, line } of rows) {
       const where = subject || `row ${line}`
       if (!command) {
         reasons.push(`'## ${sectionName}' row "${where}" in ${rel} carries no backticked evidence command — every row states how it was checked, as a read-only search (git grep / grep / rg) in a \`backticked\` cell`)
         continue
       }
-      const argv = evidenceArgv(command)
-      if (!argv) {
+      const readings = evidenceReadings(command, rawCommand)
+      if (!readings.length) {
         reasons.push(`'## ${sectionName}' row "${where}" records \`${command}\`, which is not a re-runnable read-only search — the gate re-runs it, so it must start with 'git grep', 'grep' or 'rg' and carry no shell operators (no |, ;, &&, $(), >)`)
         continue
       }
@@ -398,14 +652,15 @@ export const validators = {
         reasons.push(`'## ${sectionName}' row "${where}" has an empty Disposition — say what the hits MEAN for this change: 'safe because …', 'handled in this diff', or 'out of scope because …'. An undispositioned hit is an unread caller.`)
         continue
       }
-      const result = runEvidence(ctx.repoDir, argv)
-      if (result.error) {
-        reasons.push(`'## ${sectionName}' row "${where}": the gate could not re-run \`${command}\` — ${result.error}. Record a command that runs from the repo root.`)
+      const results = readings.map(argv => runEvidence(ctx.repoDir, argv))
+      if (results.some(r => r.hits === hits)) continue
+      const counted = [...new Set(results.filter(r => !r.error).map(r => r.hits))]
+      if (!counted.length) {
+        reasons.push(`'## ${sectionName}' row "${where}": the gate could not re-run \`${command}\` — ${results[0].error}. Record a command that runs from the repo root.`)
         continue
       }
-      if (result.hits !== hits) {
-        reasons.push(`'## ${sectionName}' row "${where}" declares ${hits} hit(s) for \`${command}\`, but re-running it now prints ${result.hits}. Either the count was never taken from the command, or the code moved since — re-run it, re-read the hits, and re-check the disposition against what it returns NOW.`)
-      }
+      const reread = readings.length > 1 ? ` (read ${readings.length} ways, as the pattern's \`|\` is ambiguous: ${counted.join(' or ')})` : ` ${counted[0]}`
+      reasons.push(`'## ${sectionName}' row "${where}" declares ${hits} hit(s) for \`${command}\`, but re-running it now prints${reread}. Either the count was never taken from the command, or the code moved since — re-run it, re-read the hits, and re-check the disposition against what it returns NOW. For an alternation, \`-e A -e B\` is unambiguous.`)
     }
     return reasons.length ? { ok: false, reasons } : ok()
   },
@@ -480,30 +735,109 @@ export const validators = {
   // pilot defect was a fix that repaired the writer and left every existing row
   // broken — locally correct, ~20% of the actual job, and the criterion never
   // failed because it was written about the mechanism instead of the world.
+  //
+  // The answer lives in '## Criteria population' (| # | Population |) below the
+  // '# Pipeline details' marker, keyed by the criterion number — NOT as a column
+  // of the criteria table. The criteria table is the developer's, written in
+  // plain words; "population: both" is pipeline vocabulary and stays out of it.
   ac_population(ctx) {
     const rel = ctx.stageDef.output
     const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
     if (!artifact) return fail(`artifact ${rel} does not exist yet`)
-    const section = sections(artifact.body)['Acceptance criteria'] ?? ''
-    const reasons = []
-    let seen = 0
+    const ids = acceptanceCriteriaIds(artifact.body)
+    if (ids.length === 0) {
+      return fail(`the context artifact's '## Acceptance criteria' has no numbered table rows — write it as | # | Now | After this ships | How to check |, numbered from 1`)
+    }
+    const section = sections(artifact.body)['Criteria population']
+    if (section === undefined) {
+      return fail(`artifact ${rel} has no '## Criteria population' section — add it under '# Pipeline details' as a table | # | Population |, one row per criterion, where Population is one of: new (only records created after this ships) / existing (rows already out there) / both / n-a. The question "what about the rows that are already broken?" is the one that turns a partial fix into a shipped fix.`)
+    }
+    const declared = new Map()
     for (const line of section.split('\n')) {
       const cells = tableCells(line)
       if (!cells || !/^\d+$/.test(cells[0] ?? '')) continue
-      seen++
-      const n = cells[0]
-      const population = (cells[3] ?? '').toLowerCase()
+      declared.set(parseInt(cells[0], 10), (cells[1] ?? '').trim())
+    }
+    const reasons = []
+    for (const n of ids) {
+      const population = declared.get(n)
       if (!population) {
-        reasons.push(`acceptance criterion AC#${n} declares no Population — add the 4th column (# | Criterion | Verified by | Population) and answer one of: new (only records created after this ships) / existing (rows already out there) / both / n-a. The question "what about the rows that are already broken?" is the one that turns a partial fix into a shipped fix.`)
+        reasons.push(`acceptance criterion AC#${n} has no row in '## Criteria population' — add | ${n} | new / existing / both / n-a | and answer, out loud with the developer: what about the records that are already wrong?`)
         continue
       }
-      if (!/\b(new|existing|both|n-?\/?a)\b/.test(population)) {
-        reasons.push(`acceptance criterion AC#${n} declares population '${cells[3]}', which is not one of: new / existing / both / n-a. Pick the vocabulary term so the plan and QA can act on it.`)
+      if (!/\b(new|existing|both|n-?\/?a)\b/.test(population.toLowerCase())) {
+        reasons.push(`acceptance criterion AC#${n} declares population '${population}', which is not one of: new / existing / both / n-a. Pick the vocabulary term so the plan and QA can act on it.`)
       }
     }
-    if (seen === 0) {
-      return fail(`the context artifact's '## Acceptance criteria' has no numbered table rows — write it as | # | Criterion | Verified by | Population |, numbered from 1`)
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // The part of the artifact a developer reads — everything above the
+  // '# Pipeline details' marker (the whole body when there is no marker). Three
+  // pilot plans ran to 5-6k words with 3k+ words of prose before the first
+  // table; the summary header we added on top of that changed nothing, because
+  // the prose was written to win the critic, not to inform the reader. So the
+  // budget is enforced: the named sections must sit above the marker and be
+  // filled, the prose stays under HUMAN_WORD_BUDGET words, a table cell stays
+  // under HUMAN_CELL_WORDS, and no line carries more than two bold spans.
+  human_part(ctx, names) {
+    const rel = ctx.stageDef.output
+    if (!rel) return fail(`stage ${ctx.stageName} has a 'human_part' validator but no output artifact — fix pipeline.yml`)
+    const artifact = parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist — create it from its template first`)
+    const { human, hasMarker } = humanPart(artifact.body)
+    const above = sections(human)
+    const all = sections(artifact.body)
+    const reasons = []
+    for (const name of names ?? []) {
+      if (name in above) {
+        if (above[name] === '') reasons.push(`section '## ${name}' in ${rel} is empty — it is the part a developer reads; write it in plain words`)
+      } else if (name in all) {
+        reasons.push(`section '## ${name}' in ${rel} sits below the '# Pipeline details' marker — it is written for the developer, move it above the marker`)
+      } else {
+        reasons.push(`artifact ${rel} is missing the required section '## ${name}' — add it above the '# Pipeline details' marker, written for a developer who has never seen this pipeline`)
+      }
     }
+    const optional = new Set([...(names ?? []), HUMAN_OPTIONAL_SECTION])
+    const pipelineSections = Object.keys(all).filter(n => !optional.has(n))
+    if (!hasMarker && pipelineSections.length) {
+      reasons.push(`artifact ${rel} has no '# Pipeline details' line — put one (on its own line, after the sections a developer reads) above every section that exists for the stage agents and the gates`)
+    }
+    const words = proseWordCount(human)
+    if (words > HUMAN_WORD_BUDGET) {
+      reasons.push(`the part of ${rel} above '# Pipeline details' runs to ${words} words of prose; the budget is ${HUMAN_WORD_BUDGET}. Cut it — a developer needs what changes and why, not the argument that got you there. Evidence, alternatives considered, and answers to the critic go below the marker`)
+    }
+    for (const { line, cell } of longCells(human)) {
+      reasons.push(`a table cell above '# Pipeline details' in ${rel} runs to ${cell.split(/\s+/).length} words (line ${line}: "${cell.slice(0, 60)}…"); keep cells under ${HUMAN_CELL_WORDS} words — split the row or move the detail below the marker`)
+    }
+    for (const { line, text } of boldHeavyLines(human)) {
+      reasons.push(`line ${line} of ${rel} carries more than two bold spans ("${text.slice(0, 60)}…") — bold one thing per line or nothing; emphasis everywhere is emphasis nowhere`)
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // No pipeline vocabulary in the part a developer reads. The words a stage
+  // agent needs (criterion ids, population, coupling, critic rounds) all have a
+  // home below '# Pipeline details'; above it, the reader is a junior developer
+  // who has never opened this repo's pipeline and should not have to.
+  plain_language(ctx) {
+    const rel = ctx.stageDef.output
+    if (!rel) return fail(`stage ${ctx.stageName} has a 'plain_language' validator but no output artifact — fix pipeline.yml`)
+    const artifact = parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist — create it from its template first`)
+    const { human } = humanPart(artifact.body)
+    const reasons = []
+    let inFence = false
+    human.split('\n').forEach((line, i) => {
+      if (/^\s*```/.test(line)) { inFence = !inFence; return }
+      if (inFence) return
+      for (const { term, re } of PIPELINE_VOCABULARY) {
+        if (re.test(line)) {
+          reasons.push(`line ${i + 1} of ${rel} uses pipeline vocabulary '${term}' ("${line.trim().slice(0, 70)}") — rewrite it for a developer who has never seen this pipeline, or move the line below '# Pipeline details'`)
+          break
+        }
+      }
+    })
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
@@ -606,10 +940,37 @@ function tableCells(line) {
   // (`git grep -nE 'a\|b'`) is markdown-escaped like any other literal pipe in a
   // cell; splitting on it blindly would chop the command in half and report the
   // row as malformed, which pushes authors toward weaker patterns.
-  return t.replace(/^\|/, '').replace(/\|$/, '')
-    .split(/(?<!\\)\|/)
-    .map(c => c.replace(/\\\|/g, '|').trim())
+  return rawTableCells(t).map(c => c.replace(/\\\|/g, '|').trim())
 }
+
+// Cells as written, `\|` kept: in a code span it is ambiguous between the
+// markdown escape and a BRE alternation the author actually ran.
+function rawTableCells(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/)
+}
+
+// A markdown table as { header (lowercased cells), rows } — the first row is
+// the header; the separator row is skipped by tableCells.
+function tableRows(text) {
+  let header = null
+  const rows = []
+  for (const line of String(text ?? '').split('\n')) {
+    const cells = tableCells(line)
+    if (!cells) continue
+    if (!header) header = cells.map(c => c.toLowerCase())
+    else rows.push(cells)
+  }
+  return { header: header ?? [], rows }
+}
+
+const columnIndex = (header, re, fallback) => {
+  const i = header.findIndex(h => re.test(h))
+  return i === -1 ? fallback : i
+}
+
+// Claims are matched on wording, ignoring markdown emphasis and spacing.
+const normClaim = s => String(s).toLowerCase().replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim()
+const normRef = ref => String(ref).replace(/^\.\//, '').replace(/\/$/, '').replace(/\.md$/, '')
 
 // Evidence rows: Subject | Evidence command | Hits | Disposition. The header
 // row is the first row carrying no backticked command — dropped, not parsed.
@@ -619,12 +980,13 @@ function evidenceRows(text) {
     const cells = tableCells(line)
     if (!cells || cells.length < 2) return
     const command = (cells[1].match(/`([^`]+)`/) || [])[1] ?? null
+    const rawCommand = ((rawTableCells(line)[1] ?? '').match(/`([^`]+)`/) || [])[1] ?? command
     const hitsCell = (cells[2] ?? '').trim()
     const hits = /^\d+$/.test(hitsCell) ? parseInt(hitsCell, 10) : null
     const subject = cells[0].replace(/`/g, '').trim()
     // Header row: no command, and the column label where a count belongs.
     if (!command && /^(hits?|count|n)$/i.test(hitsCell)) return
-    rows.push({ subject, command, hits, disposition: cells.slice(3).join(' ').trim(), line: i + 1 })
+    rows.push({ subject, command, rawCommand, hits, disposition: cells.slice(3).join(' ').trim(), line: i + 1 })
   })
   return rows
 }
@@ -651,7 +1013,8 @@ export const readOnlySearchArgv = cmd => evidenceArgv(cmd)
 function evidenceArgv(cmd) {
   // Operators are checked OUTSIDE quotes only: `git grep -n 'a|b'` is a regex,
   // not a pipeline, and refusing it would push authors toward weaker patterns.
-  const unquoted = cmd.replace(/"[^"]*"|'[^']*'/g, '')
+  // A backslash-escaped character is literal to the shell too (`a\|b`).
+  const unquoted = cmd.replace(/"[^"]*"|'[^']*'/g, '').replace(/\\./g, '')
   if (SHELL_OPERATORS.test(unquoted)) return null
   const argv = tokenizeCommand(cmd)
   if (argv.length === 0) return null
@@ -671,6 +1034,27 @@ function runEvidence(repoDir, argv) {
     if (e.status === 1) return { hits: 0 }
     return { error: (e.stderr || e.message || '').trim().split('\n')[0] || `exit ${e.status ?? '?'}` }
   }
+}
+
+// One recorded command, every reading of it an honest author could have run.
+// A pilot run: `git grep -n "A\|B"` in a table cell — the markdown unescape turned
+// the BRE alternation into a literal pipe and the gate counted 0. Another:
+// `grep -rn "a|b"` counted 14 in the agent's shell (whose grep treats `|` as
+// alternation) and 0 when re-run with the system grep. A row passes when ANY
+// reading reproduces its count; it is still falsified when none does.
+function evidenceReadings(command, rawCommand) {
+  const readings = []
+  const add = argv => {
+    if (argv && !readings.some(r => r.join('\0') === argv.join('\0'))) readings.push(argv)
+  }
+  add(evidenceArgv(command))
+  if (rawCommand && rawCommand !== command) add(evidenceArgv(rawCommand))
+  for (const argv of [...readings]) {
+    const at = argv[0] === 'git' ? 2 : 1
+    const bre = argv[0] !== 'rg' && !argv.slice(at).some(a => /^-[a-zA-Z]*[EPFG]|^--(extended|perl|basic)-regexp$|^--fixed-strings$/.test(a))
+    if (bre && argv.slice(at).some(a => /(?<!\\)\|/.test(a))) add([...argv.slice(0, at), '-E', ...argv.slice(at)])
+  }
+  return readings
 }
 
 const countLines = out => out.split('\n').filter(l => l !== '').length
@@ -707,3 +1091,72 @@ const fail = reason => ({ ok: false, reasons: [reason] })
 // to 'other' rather than frozen misclassified on disk.
 const skip = (reason, kind = 'other') => ({ skip: true, reason, kind: SKIP_KINDS.includes(kind) ? kind : 'other' })
 const lastLines = (s, n) => s.trim().split('\n').slice(-n).join('\n')
+
+// The developer-facing part of an artifact (see human_part / plain_language).
+// One screen: 300 words of prose is what a reader takes in before scrolling,
+// and 30 words is the longest a table cell stays a cell rather than a paragraph.
+export const HUMAN_WORD_BUDGET = 300
+export const HUMAN_CELL_WORDS = 30
+export const HUMAN_OPTIONAL_SECTION = 'Questions for you'
+
+// Words that mean something to a stage agent and nothing to a developer who
+// has never opened the pipeline. Each has a home below '# Pipeline details'.
+export const PIPELINE_VOCABULARY = [
+  'BLUF', 'TL;DR', 'Needs you', 'AC#n', 'population', 'disposition', 'coupling',
+  'critic', 'advisory', 'blocking', 'verdict', 'load-bearing', 'tripwire',
+  'subtask', 'artifact', 'write boundary', 'blast radius', '§', 'substate',
+  'UNVERIFIED', 'gate', 'stage', 'handoff', 'dispatcher', 'runbook'
+].map(term => ({ term, re: vocabularyPattern(term) }))
+
+function vocabularyPattern(term) {
+  switch (term) {
+    case 'TL;DR': return /\bTL;?DR\b/i
+    case 'AC#n': return /\bAC[#-]?\d+\b/
+    case '§': return /§/
+    case 'advisory': return /\badvisor(y|ies)\b/i
+    case 'subtask': return /\bsub-?tasks?\b/i
+    case 'artifact': return /\bartifacts?\b/i
+    case 'gate': return /\bgates?\b/i
+    case 'stage': return /\b(CONTEXT|PLAN|BREAKDOWN|IMPLEMENT|TEST|REVIEW|SCRIBE)\b|\bstages?\b/
+    case 'UNVERIFIED': return /\bUNVERIFIED\b/
+    default: return new RegExp(`\\b${term.replace(/[-\s]/g, '[-\\s]')}\\b`, 'i')
+  }
+}
+
+// Prose words: lines that are not headings, table rows, or fenced code
+// (a mermaid diagram is not prose). Markdown emphasis and list markers are
+// stripped so the count is of words, not of markup.
+function proseWordCount(text) {
+  let inFence = false
+  let words = 0
+  for (const raw of text.split('\n')) {
+    if (/^\s*```/.test(raw)) { inFence = !inFence; continue }
+    if (inFence) continue
+    const line = raw.trim()
+    if (!line || line.startsWith('#') || line.startsWith('|')) continue
+    const cleaned = line.replace(/^[-*>]+\s*|^\d+[.)]\s*/, '').replace(/[*_`]/g, '')
+    words += cleaned.split(/\s+/).filter(Boolean).length
+  }
+  return words
+}
+
+function longCells(text) {
+  const out = []
+  text.split('\n').forEach((line, i) => {
+    const cells = tableCells(line)
+    if (!cells) return
+    for (const cell of cells) {
+      if (cell.split(/\s+/).filter(Boolean).length > HUMAN_CELL_WORDS) out.push({ line: i + 1, cell })
+    }
+  })
+  return out
+}
+
+function boldHeavyLines(text) {
+  const out = []
+  text.split('\n').forEach((line, i) => {
+    const spans = line.match(/\*\*[^*\n]+\*\*/g) ?? []
+    if (spans.length > 2) out.push({ line: i + 1, text: line.trim() })
+  })
+  return out
+}

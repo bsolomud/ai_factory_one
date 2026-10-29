@@ -10,7 +10,9 @@ skipped checks, asset usage) + the cross-run usage report: `pipeline assets` +
 list — every `missed_by` name that is not `none` is a probe this repo owes.
 
 ## Output
-`artifacts/08-retro.md`. Required sections: Plan-vs-shipped, Learnings, Routing.
+`artifacts/08-retro.md`. Above the `# Pipeline details` line, for the
+developer: What we learned (2–5 plain bullets). Below it: Plan-vs-shipped,
+Learnings, Routing.
 
 ## Procedure
 - **Plan-vs-shipped**: diff the approved plan (with amendments) against what
@@ -87,6 +89,7 @@ list — every `missed_by` name that is not `none` is a probe this repo owes.
 ## Done when
 `pipeline probes --lint` reports no fact this run added without a runnable
 probe, and every non-`none` `missed_by` from the round ledger exists as one.
-Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Artifact complete;
+`## What we learned` (above the `# Pipeline details` line) holds 2–5 plain
+bullets a teammate could act on next week. Artifact complete;
 `pipeline advance` (auto-approvable gate); report the
 routed learnings — and the probes now in the store — and STOP. The run is DONE.

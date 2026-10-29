@@ -7,19 +7,24 @@ status: draft
 findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }
 ---
 
-# Pre-PR Review — __RUN__
+# Review — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated,
-     but the first thing the developer reads — fill it before status: complete.
-     On a re-review, keep it reflecting the LATEST round; older rounds live in
-     '## History' below. -->
-> **REVIEW · __RUN__** — <!-- OUTCOME: APPROVE / CHANGES REQUESTED -->
->
-> **Blocking** <!-- n --> · **Diff** <!-- files / commits --> · **Round** <!-- r -->
->
-> **TL;DR** — <!-- 1–2 sentences: the verdict and why. -->
->
-> **Needs you** — <!-- e.g. "Two ways to fix X — pick one (details below).", or "Nothing — ready for the PR." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). On a re-review it
+     describes the LATEST round; older rounds live in '## History'. -->
+
+## What we found
+<!-- First sentence: is this ready to open a PR, or not, and why in a phrase.
+     Then one bullet per problem worth a person's attention, in product words:
+     what could go wrong for a user, whether it is fixed already, and what is
+     still open. Nits and style go below, not here. If nothing was found, say
+     so in a sentence and stop. -->
+
+## Questions for you
+<!-- ONLY when a finding needs the developer's call — two ways to fix
+     something, or a point the implementer disputes. Delete otherwise. -->
+
+# Pipeline details
 
 ## Blind pass
 <!-- PASS A: what the diff looks like to someone who has never read the plan.
@@ -74,12 +79,41 @@ developer to arbitrate at the gate. 'None.' if none. -->
 <!-- Does the final shape still match the approved plan (incl. amendments)?
 List any drift — each item becomes an amendment or an explicit decision here. -->
 
+## Untested claims
+<!-- Machine-checked (untested_claims). One row per row of the test report's
+     '## Risk-to-test map' whose Coverage says 'not tested'. Each is a claim about
+     behaviour that a PR reviewer will read as fact, and reading the code is not
+     enough to repeat it: a pilot run's claim ("a single sync only clears the
+     status") was re-read, agreed with, shipped in the PR body, and was wrong.
+       Claim   — the test report's Risk cell, same wording.
+       Proof   — the repo-relative path of a test file you RAN that shows the
+                 behaviour (`spec/models/x_spec.rb:12`), or 'Not verified'.
+       PR note — for 'Not verified' only: one plain sentence the PR's
+                 'Testing notes' carries word for word (untested_in_pr).
+     'Not verified' never blocks; leaving a claim out does. Delete this section
+     when the test report has no 'not tested' rows.
+     | Claim | Proof | PR note |
+     |-------|-------|---------|
+     | claim, same wording | `spec/x_spec.rb:12` | |
+     | claim, same wording | Not verified | Pressing Sync on one user was not tested by hand or by a test. | -->
+
+## Team skill trace
+<!-- Machine-checked (skill_trace) ONLY when the profile binds a repo review
+     skill; delete it otherwise. The skill is executed, not read: one row per
+     step of the skill you ran, and every 'What I did' cites the `file:line` it
+     was applied to or the `command` you ran (a Verdict row may only sum up).
+     Record the skill and each of its files the trace cites with
+     'pipeline used skill <path>'.
+     | Step | What the skill asks | What I did |
+     |------|---------------------|------------|
+     | 1. Diff | the full diff vs base | `git diff master...HEAD` — 12 files | -->
+
 ## History
 <!-- Append-only archive of prior review ROUNDS. Empty until the first re-review.
      On a re-review: move the previous round's content here wrapped in a collapsed
-     <details> block, then refresh the header + the sections above to reflect the
-     LATEST round only. Never rewrite or delete an archived round.
-     <details><summary>Round 1 — YYYY-MM-DD · <verdict> (head &lt;sha&gt;)</summary>
+     <details> block, then refresh '## What we found' + the sections above to
+     reflect the LATEST round only. Never rewrite or delete an archived round.
+     <details><summary>Round 1 — YYYY-MM-DD · <outcome> (head &lt;sha&gt;)</summary>
 
      …the full prior-round content, verbatim…
      </details> -->

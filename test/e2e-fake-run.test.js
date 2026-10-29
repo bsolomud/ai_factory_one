@@ -31,12 +31,12 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   assert.match(blocked.reasons.join(' '), /status 'draft'/)
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', 'Acceptance criteria': AC_TABLE, Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': '' })
+    contextSections({ Requirements: 'Change app greeting.', Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': '' }))
   blocked = advance()
   assert.match(blocked.reasons.join(' '), /'## Open questions'.*empty/, 'empty section blocks with section name')
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
-    { Requirements: 'Change app greeting.', 'Acceptance criteria': AC_TABLE, Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': 'None.' })
+    contextSections({ Requirements: 'Change app greeting.', Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.' }))
   let gate = advance()
   assert.equal(gate.verdict, 'GATE', 'auto_approvable gate still gates under default gated autonomy')
   assert.match(advance().reasons.join(' '), /awaiting gate approval/, 'cannot advance past an unapproved gate')
@@ -116,6 +116,7 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
   assert.equal(advance().verdict, 'GATE'); assert.equal(approve().stage, 'REVIEW')
 
   // --- REVIEW / PR / CI / SCRIBE
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])  // a clean review round
   completeArtifact(runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW', {
     'Blind pass': 'Reads as a greeting change.', Findings: 'None.', Coupling: COUPLING_OK, 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'Matches plan.'
   }, CLEAN_REVIEW_COUNTS)
@@ -238,6 +239,7 @@ test('express mode auto-approves quality gates, stops at PR, still blocks on red
   assert.equal(run(['advance']).stage, 'TEST', 'IMPLEMENT subtask auto-approved in express')
   completeArtifact(runDir, 'artifacts/04-test-report.md', 'X-1', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' }, proofsFrontmatter(run(['proof-stamp']).proof_stamp))
   assert.equal(run(['advance']).stage, 'REVIEW', 'TEST auto-approved in express')
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])  // a clean review round
   completeArtifact(runDir, 'artifacts/05-review.md', 'X-1', 'REVIEW', { 'Blind pass': 'Reads as a greeting change.', Findings: 'None.', Coupling: COUPLING_OK, 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, CLEAN_REVIEW_COUNTS)
 
   // REVIEW auto-approves and advances INTO PR (in_progress; PR artifact not made yet).
@@ -403,6 +405,7 @@ conventions:
   }, proofsFrontmatter(run(['proof-stamp']).proof_stamp))
   assert.equal(run(['advance']).verdict, 'GATE'); approve()
 
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])  // a clean review round
   completeArtifact(runDir, 'artifacts/05-review.md', 'N-1', 'REVIEW', {
     'Blind pass': 'Reads as a greeting change.', Findings: 'None.', Coupling: COUPLING_OK, 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'Matches plan.'
   }, CLEAN_REVIEW_COUNTS)

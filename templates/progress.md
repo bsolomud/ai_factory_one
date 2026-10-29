@@ -4,17 +4,22 @@ stage: __STAGE__
 status: draft
 ---
 
-# Progress — __RUN__
+# Progress — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated.
-     Keep the counts current as subtasks land. -->
-> **PROGRESS · __RUN__** — <!-- OUTCOME at a glance, e.g. "5 / 7 subtasks done" -->
->
-> **Subtasks** <!-- x/y done --> · **Deviations** <!-- n, or "none substantive" -->
->
-> **TL;DR** — <!-- 1 sentence: where implementation stands. -->
->
-> **Needs you** — <!-- e.g. "Step 2 of 3 done — OK to continue?", or "Nothing in flight." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). Keep it current as steps
+     land. -->
+
+## Where we are
+<!-- 2–4 sentences. Which steps from the plan are done, which is in progress,
+     what a person can already see working. Say "step 2 of 3" in words, never
+     the pipeline's counters. If something went differently from the plan and
+     the developer should know, one sentence here — the detail goes below. -->
+
+## Questions for you
+<!-- ONLY if the next step needs the developer's decision. Delete otherwise. -->
+
+# Pipeline details
 
 ## Subtasks
 <!-- One entry per plan subtask: `- [ ] N. <title>` — checked when its gate is

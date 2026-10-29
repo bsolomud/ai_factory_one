@@ -15,10 +15,13 @@ gates). This artifact records the round so feedback never reads as a clean run.
 
 ## Output
 `artifacts/09-pr-feedback.md`, one round per feedback batch, from the matching
-template in `templates/`. Required sections: Comments, Replies, Outcome.
+template in `templates/`. Above the `# Pipeline details` line, for the
+developer: What reviewers want and Questions for you (the decisions this
+round needs). Below it: Comments, Replies, Outcome.
 
 ## Procedure — verify, then classify; never assume the reviewer is right
-- **Open the round first**: `pipeline round open pr --ref <PR>`. This batch of
+- **Open the round first**: `pipeline round open pr --ref <PR>` (the PR is
+  `pr` in `pipeline status`). This batch of
   comments IS the number the whole pipeline is trying to drive to ≤2, and until
   the ledger existed it was the one number nobody recorded — runs that took two
   reviewer rounds still reported a median of 0 corrections.

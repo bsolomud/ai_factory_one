@@ -18,6 +18,22 @@ export function isComplete(file) {
   return parseArtifact(file)?.frontmatter?.status === 'complete'
 }
 
+// Every artifact is two documents in one file. Above this line: what a
+// developer reads — plain words, one screen, no pipeline vocabulary. Below it:
+// what the stage agents and the gates read — tables, paths, evidence commands.
+// The marker is an H1 so the `## ` section parser never sees it as a section.
+export const HUMAN_MARKER = /^# Pipeline details\s*$/m
+
+// { human, pipeline, hasMarker }: the body split at the marker, HTML comments
+// (template guidance) stripped from both halves. No marker → the whole body is
+// the human part, which is right for an artifact that has no agent-only half.
+export function humanPart(body) {
+  const clean = body.replace(/<!--[\s\S]*?-->/g, '')
+  const m = clean.match(HUMAN_MARKER)
+  if (!m) return { human: clean, pipeline: '', hasMarker: false }
+  return { human: clean.slice(0, m.index), pipeline: clean.slice(m.index + m[0].length), hasMarker: true }
+}
+
 // { "Section name": "body text", ... } from `## ` headings.
 // HTML comments are template guidance, not content — stripped so an untouched
 // template section still counts as empty.

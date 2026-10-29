@@ -51,7 +51,9 @@ Rules:
 - Older `blocked` events carry only a reason COUNT (`{"reasons": N}`), no
   texts. Cite them as count-only ("blocked ×N at <stage>, causes not
   recorded") — never invent the causes.
-- Stamp the retro on its own line immediately AFTER the BLUF blockquote:
+- Stamp the retro on its own line immediately AFTER the `# Pipeline details`
+  line (the stamp names a stage, so it lives in the agents' half — the
+  developer's half above the line carries no pipeline vocabulary):
   `> Drafted by knowledge-harvest <date> — SCRIBE verifies at stage.`
   This stamp is the idempotency marker Step 1 checks for.
 - Leave `status: draft`. Completing the artifact is SCRIBE's stage act,

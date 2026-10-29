@@ -25,10 +25,21 @@ and is recorded, not waited for.
    discipline below.
 
 ## Output
-`artifacts/07-ci-analysis.md` — APPEND one entry per analyzed run. Required
-sections: Runs analyzed, Classification, Fixes, Outcome.
+`artifacts/07-ci-analysis.md` — APPEND one entry per analyzed run. Above the
+`# Pipeline details` line, for the developer: Where CI stands (the latest
+run, plain words). Below it: Runs analyzed, Classification, Fixes, Outcome.
 
 ## Procedure — hard discipline, repo-independent
+- **The PR** is `pr` in `pipeline status` (number, url, the head it was
+  opened at) — do not search for it. Null → find it once and record it:
+  `pipeline pr-opened <url>`.
+  A decision changed after the PR was published (`pr_body_current` blocks the
+  gate) → the PR body still describes the old one: update it from the
+  approved draft and re-run `pipeline pr-opened <url>`.
+- **Stacked run?** The test report's `## Base health` (or a fresh
+  `pipeline base-health`) says whether the base is red on its own. A failure
+  that also fails on the base is classified **base red** — not this change,
+  no fix proposed here; name the base's CI run.
 - **Pre-flight before classification**: run the bound triage procedure's
   mergeability and expected-vs-ran checks FIRST — green checks on a
   conflicted PR are a false green (the workflows were silently skipped, not
@@ -58,7 +69,8 @@ sections: Runs analyzed, Classification, Fixes, Outcome.
 ## Done when
 CI is green. Record the merge state in `## Outcome` — merged, or awaiting the
 developer's merge with what still has to happen (merging is a human act — never
-merge). Update the BLUF header (reflecting the latest run), set
+merge). Update `## Where CI stands` (above the `# Pipeline details` line —
+plain words, the latest run), set
 `status: complete`, `pipeline advance`, STOP. Do NOT hold the run open waiting
 for a merge: SCRIBE is next, and the learnings are worth more written down now
 than perfectly sequenced later. If the merge later needs work, `pipeline reopen`

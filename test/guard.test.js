@@ -67,6 +67,33 @@ test('git push denied before PR gate, allowed after', () => {
   assert.equal(bash(repo3, 'git push').decision, 'allow', 'CI loop pushes approved fixes')
 })
 
+// Two pilot runs: the guard judged text, not git calls — a read-only grep
+// for the words was blocked, and so was a deploy push from another worktree.
+test('git push/commit: only real git calls on the run’s branch are judged', () => {
+  const { repo, home, runDir } = setup({ stage: 'IMPLEMENT' })
+  assert.equal(bash(repo, 'grep -rn "git push" src').decision, 'allow', 'a search for the words is not a push')
+  assert.equal(bash(repo, "git grep -n 'git push origin' -- . | head").decision, 'allow')
+  assert.equal(bash(repo, 'echo "then git push" && git status').decision, 'allow')
+  assert.equal(bash(repo, 'git log --grep=push').decision, 'allow')
+  assert.equal(bash(repo, 'git status && GIT_TRACE=1 git push origin HEAD').decision, 'deny', 'a push after && is still a push')
+  assert.equal(bash(repo, 'cd x && git -C . push').decision, 'deny')
+
+  // The run records its own worktree and branch: a push from an unrelated tree
+  // on another branch is not this run's business.
+  const slug = 'example.com-test-g-repo'
+  const wt = path.join(home, 'worktrees', slug, 'T-9')
+  const other = path.join(home, 'deploy-tree')
+  repo.git('worktree', 'add', '-qb', 'T-9', wt, 'master')
+  repo.git('worktree', 'add', '-qb', 'deploy', other, 'master')
+  writeState(runDir, { ...newState({ runId: 'T-9', repo: slug, stage: 'IMPLEMENT', worktree: wt, branch: 'T-9' }) })
+  const at = (cwd, command) => guard('bash', { cwd, session_id: SESSION, tool_input: { command } }).decision
+  assert.equal(at(other, 'git push origin deploy'), 'allow', 'another tree, another branch')
+  assert.equal(at(other, 'git push origin T-9'), 'deny', 'naming the run\'s branch reaches it from anywhere')
+  assert.equal(at(other, 'git push origin HEAD:refs/heads/T-9'), 'deny')
+  assert.equal(at(wt, 'git push'), 'deny', 'in the run\'s tree')
+  assert.equal(at(other, `git -C ${wt} push`), 'deny', 'naming the run\'s tree')
+})
+
 test('git commit only in implementation stages', () => {
   const { repo } = setup({ stage: 'PLAN' })
   assert.equal(bash(repo, 'git commit -m x').decision, 'deny')
@@ -133,6 +160,58 @@ test('two active runs with worktrees: enforcement keys to the tree, from any cwd
   assert.match(fromClone(path.join(wtA, 'src/app.sh')).message, /PLAN stage/, 'write landing in the PLAN tree')
   assert.match(fromClone(path.join(wtB, 'locked/keep.txt')).message, /no_touch/, 'no_touch holds inside a worktree')
   assert.equal(fromClone('src/app.sh').decision, 'allow', 'write into the ambiguous clone itself → fail open, never guess')
+})
+
+// A pilot run: agents ran the suite in the main checkout because each
+// Bash call starts in the session's directory, not the handoff's workdir.
+test('every active run has a worktree: checks and git changes from the main checkout are denied', () => {
+  const { repo, home } = setup({ stage: 'IMPLEMENT' }) // run T-9
+  const slug = 'example.com-test-g-repo'
+  const wtA = path.join(home, 'worktrees', slug, 'T-9')
+  const wtB = path.join(home, 'worktrees', slug, 'T-10')
+  repo.git('worktree', 'add', '--detach', wtA, 'master')
+  repo.git('worktree', 'add', '--detach', wtB, 'master')
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-9'), newState({ runId: 'T-9', repo: slug, stage: 'IMPLEMENT', worktree: wtA }))
+  const fromClone = command => guard('bash', { cwd: repo.dir, session_id: SESSION, tool_input: { command } })
+
+  // One run, one tree: the denial names the exact prefix to use.
+  const denied = fromClone('./run_tests.sh tests/app_test.sh')
+  assert.equal(denied.decision, 'deny', 'profile test command in the main checkout')
+  assert.match(denied.message, new RegExp(`cd ${wtA} && \\./run_tests\\.sh`), 'names the cd prefix')
+  assert.equal(fromClone('FOO=1 lint.sh src/app.sh').decision, 'deny', 'env assignment and bare basename still match the profile command')
+  assert.equal(fromClone('git add -A').decision, 'deny', 'tree-changing git verb')
+  assert.equal(fromClone('git -c core.x=y commit -m x').decision, 'deny', 'verb found past global options')
+  assert.equal(fromClone('git status && git log -1').decision, 'allow', 'git reads stay free')
+  assert.equal(fromClone('grep -rn add src').decision, 'allow', 'not a check, not git')
+  assert.equal(fromClone('~/.ai_factory_one/bin/pipeline status').decision, 'allow', 'the CLI is not a repo check')
+  // env_checks hold bare shell probes (`test -s …`); `test` must not become a check signature.
+  installProfile(home, slug, STANDARD_PROFILE.replace('post_change_hooks: []', 'post_change_hooks: []\n  env_checks: "test -s src/app.sh"'))
+  assert.equal(fromClone('test -s locked/keep.txt && echo ok').decision, 'allow', 'shell test is not a profile check')
+  assert.equal(fromClone('./run_tests.sh tests/app_test.sh').decision, 'deny', 'real checks still caught with env_checks present')
+  assert.equal(fromClone(`cd ${wtA} && ./run_tests.sh tests/app_test.sh`).decision, 'allow', 'cd into the run tree')
+  assert.equal(fromClone(`git -C ${wtA} commit -m x`).decision, 'allow', 'git -C the run tree')
+  assert.equal(guard('bash', { cwd: wtA, session_id: SESSION, tool_input: { command: './run_tests.sh tests/app_test.sh' } }).decision, 'allow', 'cwd already in the tree')
+
+  // Two runs, both in worktrees: still denied, the message lists both trees.
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-10'), newState({ runId: 'T-10', repo: slug, stage: 'IMPLEMENT', worktree: wtB }))
+  const both = fromClone('./lint.sh src/app.sh')
+  assert.equal(both.decision, 'deny', 'ambiguous run, but no run lives in the main checkout')
+  assert.ok(both.message.includes(wtA) && both.message.includes(wtB), 'lists every run tree')
+  assert.equal(fromClone(`cd ${wtB} && ./lint.sh src/app.sh`).decision, 'allow', 'either run tree passes')
+
+  // A run working in the main checkout itself makes it a legitimate place again.
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-11'), newState({ runId: 'T-11', repo: slug, stage: 'IMPLEMENT' }))
+  assert.notEqual(fromClone('./lint.sh src/app.sh').message ?? '', denied.message, 'no stray-tree denial when a run lives here')
+  assert.equal(fromClone('./lint.sh src/app.sh').decision, 'allow')
+})
+
+test('stray-tree rule never fires outside an engaged session', () => {
+  const { repo, home } = setup({ stage: 'IMPLEMENT', engaged: false })
+  const slug = 'example.com-test-g-repo'
+  const wt = path.join(home, 'worktrees', slug, 'T-9')
+  repo.git('worktree', 'add', '--detach', wt, 'master')
+  writeState(path.join(home, 'repos', slug, 'runs', 'T-9'), newState({ runId: 'T-9', repo: slug, stage: 'IMPLEMENT', worktree: wt }))
+  assert.equal(guard('bash', { cwd: repo.dir, session_id: SESSION, tool_input: { command: 'git commit -m x' } }).decision, 'allow')
 })
 
 // --- opt-in: pipeline never enforces unless THIS session ran /pipeline ---

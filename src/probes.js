@@ -26,7 +26,7 @@ import { readOnlySearchArgv } from './validators.js'
 //     - when: ["app/**/*.rb", "lib/**/*.rb"]
 //       run: "git grep -n default_scope -- app/models"
 //       asks: "does an implicit scope make this query answer a different question?"
-//   taught_by: "TASK-109 / PR #14"
+//   taught_by: "<ticket> / <PR>"
 //   ---
 //
 // TWO TIERS, because the store proved the single-tier design wrong. Facts

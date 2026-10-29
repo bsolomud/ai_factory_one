@@ -67,7 +67,8 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   const gates = events.filter(e => e.event === 'gate_approved')
     .map(e => ({ stage: e.stage, subtask: e.subtask ?? null, approved: true, by: e.by || 'human', at: e.at, note: e.note || '' }))
   const created = events.find(e => e.event === 'run_created')
-  const base = created?.base || 'master'
+  // set-base after creation: the latest base_changed wins over run_created.
+  const base = events.filter(e => e.event === 'base_changed').at(-1)?.to || created?.base || 'master'
   const branch = events.filter(e => e.event === 'branch_recorded').at(-1)?.branch || null
   // Ambient baseline: the latest snapshot wins (ignore-untracked re-snapshots);
   // pre-list-events runs recorded only a count — tolerate that, restore nothing.

@@ -55,7 +55,7 @@ over the column returned **no other writer, no backfill migration, no callback**
 — so every existing record stayed broken. The same review noted the parallel
 integration had the identical gap. The fix was ~20% of the job and every check
 was green. **If this probe returns 0 other writers, the population question from
-`AC · Population` is live: who migrates the rows that are already wrong?**
+`## Criteria population` is live: who migrates the rows that are already wrong?**
 
 ### 2. Downstream readers — who consumes what I changed?
 For every identifier the diff removes, renames, drops from a payload, or whose
@@ -136,7 +136,7 @@ If there is no answer, that is the finding.
 ```
 | Subject | Evidence command | Hits | Disposition |
 |---------|------------------|------|-------------|
-| `sync_mode` writers | `git grep -n sync_mode -- app lib` | 3 | 2 reads (safe), 1 writer fixed here; no backfill exists ⇒ AC#2 covers existing rows |
+| `notify_mode` writers | `git grep -n notify_mode -- app lib` | 3 | 2 reads (safe), 1 writer fixed here; no backfill exists ⇒ AC#2 covers existing rows |
 ```
 
 - **Subject** — the symbol, not the worry. One row per symbol.

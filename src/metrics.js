@@ -63,7 +63,7 @@ export function runMetrics(runDir, runId, config = null) {
   // the only counter was human_rounds, which sees in-run corrections only — so
   // a run that took two PR rounds still reported a median of 0.
   const rounds = events.filter(e => e.event === 'round_opened')
-  const findings = events.filter(e => e.event === 'finding_recorded')
+  const findings = events.filter(e => e.event === 'finding_recorded' && !e.settles)
   const externalRounds = rounds.filter(r => r.source !== 'pre-pr').length
   // The learning loop's own pass/fail: did this run's lessons get read? A
   // complete retro means SCRIBE ran; a harvest means an aborted run was still

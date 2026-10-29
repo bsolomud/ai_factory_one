@@ -107,7 +107,7 @@ test('retro: collects reviewer comments on closed run PRs, privately; finish wai
   run(['pr-opened', 'https://example.com/acme/app/pull/77'])
   const c = run(['retro', 'collect'], env)
   assert.equal(c.verdict, 'OK')
-  assert.deepEqual(c.prs, [{ slug: 'example.com-test-retro-repo', run: 'R-1', pr: 77, comments: 3, pre_pr_findings: 1 }],
+  assert.deepEqual(c.prs, [{ slug: 'example.com-test-retro-repo', run: 'R-1', pr: 77, comments: 3, pre_pr_findings: 1, unrecorded_rework: 0 }],
     'the author\'s own notes and empty approvals are not feedback; the bot is kept and marked')
   const batch = JSON.parse(fs.readFileSync(c.batch_file, 'utf8'))
   const ext = batch.items[0].external

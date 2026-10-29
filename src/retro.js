@@ -50,8 +50,31 @@ function runPrs(runDir, state, repoPath) {
   return [...numbers]
 }
 
+// Rework nobody recorded: commits on the PR after the run passed its CI gate
+// that fall in no feedback window. A window opens with a 'pr' or 'ci' round
+// and lasts until the run next reaches DONE — the feedback procedure closes
+// its round at triage and reworks after, through a reopened run. In two pilot
+// PRs every post-PR commit was made in a plain session with no round at all,
+// and the feedback procedure's rules (a coupling row per fix, re-prove,
+// refresh the PR body) never applied to them.
+export function unrecordedRework(events, commits) {
+  const ms = t => Date.parse(t)
+  const passedCi = events.find(e => e.event === 'advanced' && e.from === 'CI')
+  if (!passedCi) return []
+  const windows = events
+    .filter(e => e.event === 'round_opened' && ['pr', 'ci'].includes(e.source))
+    .map(r => {
+      const done = events.find(e => e.event === 'advanced' && e.to === 'DONE' && ms(e.at) > ms(r.at))
+      return [ms(r.at), done ? ms(done.at) : Infinity]
+    })
+  return commits
+    .filter(c => ms(c.at) > ms(passedCi.at))
+    .filter(c => !windows.some(([a, b]) => ms(c.at) >= a && ms(c.at) <= b))
+}
+
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-number url title state mergedAt closedAt author{login}
+number url title state createdAt mergedAt closedAt author{login}
+commits(last:100){nodes{commit{oid committedDate messageHeadline}}}
 reviewThreads(first:100){nodes{path line isResolved isOutdated comments(first:30){nodes{author{login __typename} body createdAt}}}}
 reviews(first:60){nodes{author{login __typename} state body submittedAt}}
 comments(first:60){nodes{author{login __typename} body createdAt}}}}}`
@@ -90,9 +113,12 @@ function fetchPr(repoPath, number) {
 
 // What the run itself knew before the PR: its pre-PR findings and rounds,
 // and where its artifacts are, for the analyst to read.
-function runSide(runDir) {
+function runSide(runDir, pr) {
   const events = readEvents(runDir)
+  const commits = (pr.commits?.nodes || []).map(n => ({ oid: n.commit.oid, at: n.commit.committedDate, headline: n.commit.messageHeadline }))
+  const rework = unrecordedRework(events, commits)
   return {
+    unrecorded_rework: rework.map(c => ({ oid: c.oid.slice(0, 11), at: c.at, headline: c.headline })),
     pre_pr_findings: events
       .filter(e => e.event === 'finding_recorded' && e.source === 'pre-pr' && !e.settles)
       .map(e => ({ round: e.round, class: e.class, disposition: e.disposition, summary: e.summary })),
@@ -131,7 +157,7 @@ export function collect({ since = null, repo = null, again = false } = {}) {
           slug: r.slug, run: runId, run_dir: runDir, repo_path: r.path,
           pr: { number: pr.number, url: pr.url, title: pr.title, state: pr.state, closed_at: closed },
           external: feedback(pr),
-          ...runSide(runDir)
+          ...runSide(runDir, pr)
         })
       }
     }
@@ -155,4 +181,35 @@ export function finish(stamp) {
   fs.mkdirSync(retroDir(), { recursive: true })
   if (lines.length) fs.appendFileSync(ledgerFile(), lines.join('\n') + '\n')
   return lines.length
+}
+
+// For `doctor`: runs past their CI gate whose PR is still open and has moved
+// with no feedback round. Asks gh once per such run; silent when it cannot.
+export function openPrRework(slug, repoPath) {
+  const out = []
+  const runsRoot = path.join(paths.repoHome(slug), 'runs')
+  if (!repoPath || !fs.existsSync(runsRoot)) return out
+  for (const runId of fs.readdirSync(runsRoot)) {
+    const runDir = path.join(runsRoot, runId)
+    let state
+    try { state = readState(runDir) } catch { continue }
+    if (!['SCRIBE', 'DONE'].includes(state.stage)) continue
+    const events = readEvents(runDir)
+    const opened = events.filter(e => e.event === 'pr_opened').at(-1)
+    if (!opened) continue
+    let pr
+    try { pr = JSON.parse(gh(['pr', 'view', String(opened.number), '--json', 'state,url,commits'], repoPath)) } catch { continue }
+    if (pr.state !== 'OPEN') continue
+    const commits = (pr.commits || []).map(c => ({ oid: c.oid, at: c.committedDate }))
+    const rework = unrecordedRework(events, commits)
+    if (!rework.length) continue
+    out.push({
+      run: runId,
+      pr: opened.number,
+      commits: rework.length,
+      note: `PR #${opened.number} moved ${rework.length} commit(s) after the run passed CI, with no feedback round recorded`,
+      next_action: `pipeline round open pr --run ${runId} --ref ${pr.url || opened.url || opened.number}, then follow the PR-feedback procedure (a coupling row per fix, re-prove, refresh the PR body)`
+    })
+  }
+  return out
 }

@@ -46,6 +46,18 @@ deferred by the developer with a sentence the PR carries (`--deferred`,
 `deferred_in_pr`). Measured 2026-10-29: the PRs on this team that merge without
 comments come from exactly that loop, run before the PR opens.
 
+Three more gates came out of the first `/pipeline-retro`:
+- **`claims_written`** (REVIEW). Every line the change adds to a comment, a doc
+  or a message that says "every", "only", "never", "updated" and the like is
+  proven, narrowed, or carried to the PR as `Not verified`.
+- **Review fixes made after a run closed are no longer invisible.** `pipeline
+  doctor` lists closed runs whose open PR moved with no feedback round. The
+  guard advises (never blocks) on a commit to such a branch. `pr_body_current`
+  blocks CI until a PR whose code changed in a feedback round is re-published.
+- **`keyed_file_collision`** (PR and CI). Files whose names carry an ordered key,
+  declared in the profile as `keyed_files`, may not reuse a key on the base tip,
+  fetched fresh.
+
 Its absence was the measurable asymmetry: a repo's review skill accretes a rule
 per retrospective (one pilot repo's cites 397 PR numbers), while the
 implementing side accreted nothing — 10 knowledge facts across 29 runs, none of

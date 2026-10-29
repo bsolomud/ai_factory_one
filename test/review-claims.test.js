@@ -139,3 +139,39 @@ test('skill_trace: no repo binding → nothing required', () => {
   review(runDir)
   assert.equal(validators.skill_trace(ctx).ok, true)
 })
+
+// The retro: five reviewer comments in two PRs were sentences the change wrote
+// into comments, docs and messages, claiming more than the code does.
+test('claims_written: every universal or outcome sentence the change writes is proven, narrowed, or carried to the PR', () => {
+  const { repo, runDir, review: ctx, pr } = setup()
+  const reviewWith = rows => completeArtifact(runDir, 'artifacts/05-review.md', 'T-1', 'REVIEW',
+    { Findings: 'None.', ...(rows !== undefined && { 'Claims written': `| Where | Claim | Proof | PR note |\n|---|---|---|---|\n${rows}` }) })
+  reviewWith(undefined)
+  assert.equal(validators.claims_written(ctx).ok, true, 'no such sentence, nothing owed')
+
+  repo.write('src/app.sh', 'echo v1\n# every caller passes a user\nfor x in all; do :; done\n')
+  repo.write('docs/notes.md', '# Notes\n\nOnly admins see this.\nPlain line.\n')
+  repo.write('tests/app_test.sh', '# never flaky\n')
+  let v = validators.claims_written(ctx)
+  assert.equal(v.ok, false)
+  assert.match(v.reasons[0], /2 sentence\(s\).*src\/app\.sh:2 "# every caller passes a user".*docs\/notes\.md:3 "Only admins see this\."/)
+  assert.doesNotMatch(v.reasons[0], /for x in all|never flaky/, 'code lines and tests are not claims')
+
+  reviewWith('| `src/app.sh:2` | every caller passes a user | read it, looks right | |')
+  v = validators.claims_written(ctx)
+  assert.equal(v.ok, false)
+  assert.equal(v.reasons.length, 2)
+  assert.match(v.reasons[0], /docs\/notes\.md:3/)
+  assert.match(v.reasons[1], /src\/app\.sh:2: Proof must show what was run/)
+
+  reviewWith([
+    '| `src/app.sh:2` | every caller passes a user | `grep -rn app.sh src` → 1 caller, passes one | |',
+    '| `docs/notes.md:1-4` | only admins | Not verified | Who can see the notes page was not checked. |'
+  ].join('\n'))
+  assert.equal(validators.claims_written(ctx).ok, true, 'a range covers the lines in it')
+
+  completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'T-1', 'PR', { 'Testing notes': 'All green.' })
+  v = validators.untested_in_pr(pr)
+  assert.equal(v.ok, false, 'a written claim nobody checked reaches the PR like an untested one')
+  assert.match(v.reasons[0], /Who can see the notes page was not checked\./)
+})

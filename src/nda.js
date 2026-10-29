@@ -124,7 +124,15 @@ function inProjects(words) {
 
 // The tool's public vocabulary: every word and path in what it ships to any
 // project. A retro proposal may use these freely — they name the tool.
+// The bundled install (bin/pipeline under the home) has no sources to walk, so
+// the build writes this vocabulary to vocabulary.json and install ships it.
 export function toolVocabulary(root = paths.packageRoot()) {
+  if (!fs.existsSync(path.join(root, 'src'))) {
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(root, 'vocabulary.json'), 'utf8'))
+      return { words: new Set(v.words), shipped: new Set(v.shipped) }
+    } catch { /* no shipped vocabulary: fall through to whatever is here */ }
+  }
   const words = new Set()
   const shipped = new Set()
   const walk = (rel) => {

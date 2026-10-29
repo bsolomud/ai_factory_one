@@ -20,7 +20,7 @@ it runs.
   and events, the project checkouts (read-only, only to understand a comment),
   the pipeline's own files.
 - **Writes**: only under `~/.ai_factory_one/retro/`: the batch's private
-  `analysis.md`, and `proposals.md`.
+  `analysis.md` (you save it from the agent's reply), and `proposals.md`.
 - **Never**: run `/pipeline` or any pipeline command that changes a run
   (`advance`, `approve`, `reopen`, `round`, `finding`, …); edit a run's
   `state.json`, `events.jsonl` or artifacts; write into a project repo or
@@ -40,8 +40,11 @@ it runs.
 2. Spawn **pipeline-retro** (fresh context) with one handoff line each:
    `batch: <batch_file>`, `proposals: ~/.ai_factory_one/retro/proposals.md`,
    `pipeline: <the ai_factory_one package dir, or ~/.ai_factory_one>`. It
-   writes `analysis.md` next to the batch and appends one dated section to
-   `proposals.md`.
+   appends one dated section to `proposals.md` and returns the analysis in its
+   reply between `=== analysis.md ===` and `=== end analysis.md ===`: save that
+   text verbatim as `analysis.md` in the batch's directory (the host does not
+   let a subagent write it). If its reply carries a `=== proposals section ===`
+   block instead of having appended it, append that block to `proposals.md`.
 3. `pipeline nda-check`. Violations → send them back to the agent (or fix the
    lines yourself) until clean. Never weaken a line by deleting the evidence
    count; rephrase it generically.

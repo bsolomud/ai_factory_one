@@ -17,7 +17,7 @@ Catch issues while fixing them is private and cheap — before a PR exists.
 `artifacts/05-review.md`. Above the `# Pipeline details` line, for the
 developer: What we found (and Questions for you, only when a finding needs
 their call). Below it: Blind pass, Findings, Coupling, Fixes applied,
-Disputed, Plan-vs-shipped check, and — when they apply — Untested claims and
+Disputed, Plan-vs-shipped check, and — when they apply — Untested claims, Claims written and
 Team skill trace.
 
 ## Two passes, and the order is load-bearing
@@ -120,6 +120,13 @@ finding — usually about legibility, often about the code.
   reading — find or run a test that shows the behaviour and cite its path, or
   write `Not verified` with one plain sentence for the PR's Testing notes. A
   claim you could not check is fine; a claim that silently reaches the PR is not.
+- **Claims written** (`claims_written` gates it, and lists them): every line
+  the change adds to a comment, a doc or a user-visible message that says
+  "every", "only", "never", "updated" and the like is a claim the next reader
+  takes as fact. Prove each by running something, narrow its wording to what
+  is true, or write `Not verified` with a PR note. For a message that states an
+  outcome, check each state that changes the outcome. In the pilot such
+  sentences drew five reviewer comments in two PRs; two merged unfixed.
 - **Bound repo review skill → execute it, step by step** (`skill_trace` gates
   it): `## Team skill trace` has one row per step you ran, each citing the
   file:line or command, and every skill file you cite is recorded with

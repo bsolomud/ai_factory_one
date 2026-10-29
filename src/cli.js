@@ -16,7 +16,7 @@ import * as paths from './paths.js'
 import { codeGraph } from './codegraph.js'
 import { baseHealth, isStacked } from './basehealth.js'
 import { ndaCheck, termsFile } from './nda.js'
-import { collect as retroCollect, finish as retroFinish, proposalsFile, readLedger, retroDir } from './retro.js'
+import { collect as retroCollect, finish as retroFinish, openPrRework, proposalsFile, readLedger, retroDir } from './retro.js'
 
 // Exit codes: 0 = success verdicts, 1 = BLOCKED/error. A non-zero exit surfaces
 // as a tool error to the model — a far stronger signal than prose.
@@ -542,7 +542,7 @@ const commands = {
         verdict: r.items.length ? 'OK' : 'NOTHING_NEW',
         batch: r.batch,
         batch_file: path.join(r.batch_dir, 'batch.json'),
-        prs: r.items.map(i => ({ slug: i.slug, run: i.run, pr: i.pr.number, comments: i.external.length, pre_pr_findings: i.pre_pr_findings.length })),
+        prs: r.items.map(i => ({ slug: i.slug, run: i.run, pr: i.pr.number, comments: i.external.length, pre_pr_findings: i.pre_pr_findings.length, unrecorded_rework: i.unrecorded_rework.length })),
         comments,
         skipped: r.skipped,
         proposals: proposalsFile(),
@@ -806,12 +806,17 @@ const commands = {
     // stage, where it reads as a failing change rather than an unprepared tree.
     if (flags.env) return envReport(ctx, flags)
     const { errors, warnings } = validateProfile(ctx.profile)
+    // Review fixes made after a run closed, outside any round: the feedback
+    // procedure never saw them. Advisory, never an error.
+    const prRework = openPrRework(ctx.slug, ctx.repoDir)
+    for (const r of prRework) warnings.push(`run ${r.run}: ${r.note} — ${r.next_action}`)
     return emit({
       verdict: errors.length ? 'INVALID' : 'OK',
       repo: ctx.slug,
       profile_path: paths.profilePath(ctx.slug),
       errors,
       warnings,
+      pr_rework: prRework,
       note: `profile schema only — run 'pipeline doctor --env' to check that the working tree can actually run this repo's commands`
     }, errors.length ? 1 : 0)
   },

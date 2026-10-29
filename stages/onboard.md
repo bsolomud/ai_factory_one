@@ -69,7 +69,11 @@ Base branch, branch/PR naming, canonical command when several exist,
 `commands.worktree_setup`: the command(s) that make a fresh checkout of this
 repo runnable (dependency install, config copy) — used when a run gets its own
 worktree for parallel tickets; leave empty if the developer prefers to set
-worktrees up by hand. Prefill from detection (and from `existing_profile` when
+worktrees up by hand. When the repo has files whose names carry an ordered
+key that must be unique across branches (a migrations directory, numbered
+changelogs), propose `keyed_files: [{ glob, key }]` — `key` a regex on the file
+name whose first group is the key; the PR and CI gates check new ones against
+the base tip. Prefill from detection (and from `existing_profile` when
 re-onboarding). Never ask about task-tracker access here.
 
 Also ask for `commands.env_checks` — the cheap commands that prove a checkout
@@ -92,8 +96,8 @@ any code is written. Leave empty if the developer has nothing to name.
 `profile.yml` at `profile_path`, with: `commands` slots (each command entry
 carries a `verified:` tier — `config` | `liveness` | `executed` — from step 1;
 an empty slot = recorded honestly, checks become UNVERIFIED), `test_layout`,
-`conventions`, `no_touch`, `bindings` (mode + per-capability source/path/sha),
-and `evidence_hashes` for the files detection relied on (`pipeline hash` again).
+`conventions`, `no_touch`, `keyed_files` when proposed, `bindings` (mode +
+per-capability source/path/sha), and `evidence_hashes` for the files detection relied on (`pipeline hash` again).
 
 ### 5. Confirm
 Show the developer the full profile and wait for explicit confirmation —

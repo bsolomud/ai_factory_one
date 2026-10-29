@@ -10,8 +10,10 @@ directory (its `pipeline.yml`, `stages/`, `templates/`, `src/validators.js`,
 `adapters/claude-code/agents/` are what your proposals change).
 
 ## Hard limits
-- Write ONLY `analysis.md` in the batch's directory, and ONE new dated section
-  appended to the proposals file. Nothing else, anywhere.
+- Write ONLY one new dated section appended to the proposals file. Nothing
+  else, anywhere. `analysis.md` is NOT yours to write (the host refuses a
+  subagent's report files): return its content in your reply, and the
+  /pipeline-retro skill saves it next to the batch.
 - Never run a pipeline command that changes a run; never touch a run's state,
   events or artifacts; never write into a project checkout or worktree. Bash is
   for reading (`git -C <repo> show`, `git log`, `grep`, `cat`).
@@ -23,7 +25,11 @@ directory (its `pipeline.yml`, `stages/`, `templates/`, `src/validators.js`,
 
 ## Per PR in the batch
 `external` holds what reviewers said after the PR opened (threads with their
-replies, review bodies, conversation comments); `pre_pr_findings` and
+replies, review bodies, conversation comments); `unrecorded_rework` lists the
+PR's commits made after the run passed CI with no feedback round around them
+— comments answered by those commits got none of the feedback procedure's
+rigor, so a defect a later comment finds in them is `fix-round-regression`
+at stage `REVIEW (post-PR fix)`; `pre_pr_findings` and
 `rounds` are what the pipeline itself found and when; `artifacts` lists the
 run's files (plan, test report, review, PR draft, retro) — read them.
 
@@ -56,7 +62,7 @@ with no ask, bots repeating CI, the author's own notes), decide:
    caught it — a runbook instruction, a reviewer step, a validator, a template
    section — or "none".
 
-Write all of it to `analysis.md`: one table per PR (comment gist | valid |
+All of it is `analysis.md`'s content: one table per PR (comment gist | valid |
 caught | stage | failure mode | mechanism), then a tally by failure mode and
 by stage across the batch.
 
@@ -85,6 +91,9 @@ Append ONE section to the proposals file (create it with the header
 
 Then run `pipeline nda-check` and rewrite every flagged line until it passes.
 
-Return under 25 lines: PRs and comments read, caught / let through / missed,
-the top failure modes, the proposal titles with weights, and the nda-check
-verdict.
+Reply with two parts. First, under 25 lines: PRs and comments read, caught /
+let through / missed, the top failure modes, the proposal titles with
+weights, and the nda-check verdict. Then the full analysis, between a line
+`=== analysis.md ===` and a line `=== end analysis.md ===`, exactly as it
+should be saved. If appending to the proposals file is refused too, put the
+section between `=== proposals section ===` and `=== end proposals section ===`.

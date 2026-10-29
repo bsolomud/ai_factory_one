@@ -97,6 +97,29 @@ List any drift — each item becomes an amendment or an explicit decision here. 
      | claim, same wording | `spec/x_spec.rb:12` | |
      | claim, same wording | Not verified | Pressing Sync on one user was not tested by hand or by a test. | -->
 
+## Claims written
+<!-- Machine-checked (claims_written). One row per sentence the CHANGE adds to a
+     code comment, a doc or a user-visible message that carries a universal or
+     outcome word (any, every, all, each, never, always, only, same, cannot,
+     updated, …) — the gate lists them. A later reader takes each as fact; in
+     the pilot, five reviewer comments in two PRs were such sentences claiming
+     more than the code does, and two merged unfixed.
+       Where   — `path:line`, or `path:from-to` for a run of lines.
+       Claim   — the sentence, shortened if long.
+       Proof   — what you ran, in backticks: a test path, or a command and what
+                 it printed. For a message that states an outcome ("was
+                 updated"), name each state that changes the outcome (a
+                 protected or read-only record, a dry run…) and its test. Or
+                 'narrowed: <new wording>' after rewriting the line to say only
+                 what is true. Or 'Not verified'.
+       PR note — for 'Not verified' only: a sentence the PR's Testing notes
+                 carries word for word (untested_in_pr).
+     Delete this section when the change writes no such sentence.
+     | Where | Claim | Proof | PR note |
+     |-------|-------|-------|---------|
+     | `app/x.rb:12` | "every caller passes a user" | `git grep -n "x(" -- app` → 3 callers, all pass one | |
+     | `doc/x.md:40-44` | "only active rows count" | narrowed: "rows not marked for deletion count" | | -->
+
 ## Team skill trace
 <!-- Machine-checked (skill_trace) ONLY when the profile binds a repo review
      skill; delete it otherwise. The skill is executed, not read: one row per

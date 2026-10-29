@@ -44,6 +44,10 @@ run, plain words). Below it: Runs analyzed, Classification, Fixes, Outcome.
   mergeability and expected-vs-ran checks FIRST — green checks on a
   conflicted PR are a false green (the workflows were silently skipped, not
   passed), and a missing workflow must be explained before any log is read.
+- **Each time you look at CI, also run `pipeline check`.** It re-checks the
+  change's keyed files (the profile's `keyed_files`, e.g. migration versions)
+  against the base tip as it is now: a collision with work merged after the PR
+  opened is reported here, before someone else's deploy fails on it.
 - Classify each failure with evidence: **deterministic** (maps to the diff →
   propose a fix) / **suspected flake or order dependence** (reproduce FIRST;
   use repo tooling when documented) / **lint** (targeted fix) /

@@ -34,6 +34,12 @@ artifacts' halves above their `# Pipeline details` lines.
   still describes the old one. If the PR is already published, after this
   gate update its body from the approved draft (`gh pr edit <n> --body-file
   …`) and re-run `pipeline pr-opened <url>` — the CI gate checks it.
+- **Back here after a review-feedback round** (the PR is already open): write
+  the draft for the code as it now is — say what the round changed, drop
+  questions it resolved, and add a **QA re-check** list to Testing notes (what
+  a tester must try again because this round changed it). Publish it the same
+  way; `pr_body_current` blocks the CI gate while the PR body predates the
+  rework.
 
 ## Done when
 The whole draft is written for people — built from the developer-facing

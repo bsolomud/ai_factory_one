@@ -31,6 +31,11 @@ run directory, and base branch. Read your runbook
   Plan-vs-shipped check). If there are confirmed findings that require code
   fixes, do NOT fix them yourself — return them; the dispatcher sends them to
   the implementer, then re-invokes you to verify and finalize.
+- Every comment, doc or message line the change adds that says "every",
+  "only", "never", "updated" and the like gets a `## Claims written` row
+  (the gate lists them): proven by something you ran, narrowed to what is
+  true, or `Not verified` with a PR note. Check an outcome message in each
+  state that changes the outcome.
 - Report EVERY real finding, advisory and pre-existing included, and record
   each with `pipeline finding`: the gate passes only when a round comes back
   with nothing standing, because the PR reviewer raises them all. Never file a

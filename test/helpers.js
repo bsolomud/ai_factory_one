@@ -42,7 +42,7 @@ export function installProfile(home, slug, profile) {
 // Run the real executable, exactly as the model would.
 export function cli(args, { home, cwd, env: extraEnv = {} }) {
   const bin = path.join(PACKAGE_ROOT, 'bin', 'pipeline')
-  const env = { ...process.env, AI_FACTORY_HOME: home, ...extraEnv }
+  const env = { ...process.env, AI_FACTORY_HOME: home, CBM_BIN: '', ...extraEnv }
   try {
     const stdout = execFileSync('node', [bin, ...args], { cwd, env, encoding: 'utf8' })
     return { code: 0, ...JSON.parse(stdout) }
@@ -57,16 +57,41 @@ export function cli(args, { home, cwd, env: extraEnv = {} }) {
 // Canonical fake artifact inputs. One home, so adding a required section (the
 // Decisions gate did this — it forced edits at every call site) is a one-line
 // change here, not a sweep across the test files.
-export const contextSections = (over = {}) => ({ Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.', ...over })
+export const contextSections = (over = {}) => ({ Requirements: 'r', 'Acceptance criteria': AC_TABLE, 'Criteria population': AC_POPULATION, Decisions: 'None — fake run.', Findings: 'f', 'Open questions': 'None.', ...over })
 export const CLEAN_REVIEW_COUNTS = 'findings: { blocking: 0, advisory: 0, fixed: 0, disputed: 0 }'
 
-// A criterion table that satisfies ac_population: numbered rows, and a 4th
-// column naming the population the criterion is about.
+// The developer's criteria table (plain words, above the marker) and the
+// population table that answers, per criterion number, which records it is
+// about (below the marker; machine-read by ac_population).
 export const AC_TABLE = [
-  '| # | Criterion | Verified by | Population |',
-  '|---|-----------|-------------|------------|',
-  '| 1 | the thing is true | `tests/app_test.sh` | both |'
+  '| # | Now | After this ships | How to check |',
+  '|---|-----|------------------|--------------|',
+  '| 1 | the app prints v1 | the app prints the new greeting | `tests/app_test.sh` |'
 ].join('\n')
+export const AC_POPULATION = [
+  '| # | Population |',
+  '|---|------------|',
+  '| 1 | both |'
+].join('\n')
+
+// Every artifact is two halves split by the '# Pipeline details' marker: the
+// sections a developer reads (checked by human_part / plain_language) and the
+// sections the agents and gates read. Fixtures name only the pipeline half;
+// completeArtifact fills the developer half per stage, so a test that is not
+// about that half never has to spell it out. Pass a human section explicitly
+// (or as '' to leave it empty) to override.
+export const HUMAN_DEFAULTS = {
+  CONTEXT: { "What we're doing": 'We change the greeting.', Why: 'The old one is wrong.', 'What changes': '- the app prints the new greeting', 'Acceptance criteria': AC_TABLE },
+  PLAN: { "What we're doing": 'We change the greeting.', Why: 'The old one is wrong.', "How we'll build it": '1. Edit the greeting.' },
+  BREAKDOWN: { 'Where we are': 'Step 1 of 1 is next.' },
+  TEST: { 'What we checked': 'The greeting test fails without the change.' },
+  REVIEW: { 'What we found': 'Ready to open a PR. Nothing found.' },
+  CI: { 'Where CI stands': 'Green.' },
+  SCRIBE: { 'What we learned': '- keep greetings short' },
+  PR: { Title: 'Change the greeting', Description: 'The app prints the new greeting.', 'Testing notes': 'covered by the app test', 'Ops notes': 'None.', 'Reviewer guidance': 'one file' },
+  PR_FEEDBACK: { 'What reviewers want': '- nothing', 'Questions for you': 'None to decide.' }
+}
+export const HUMAN_MARKER_LINE = '# Pipeline details'
 
 // A coupling row evidence_verified can re-run in any repo state: the token
 // appears nowhere, so the command always prints 0 lines. That is not a degenerate
@@ -89,8 +114,25 @@ export const proofsFrontmatter = stamp =>
 // artifact's machine-read findings counts).
 export function completeArtifact(runDir, rel, run, stage, sections, extraFrontmatter = '') {
   const extra = extraFrontmatter ? `${extraFrontmatter.trim()}\n` : ''
-  const body = Object.entries(sections).map(([name, text]) => `## ${name}\n${text}\n`).join('\n')
-  writeFile(runDir, rel, `---\nrun: ${run}\nstage: ${stage}\nstatus: complete\n${extra}---\n\n${body}`)
+  writeFile(runDir, rel, `---\nrun: ${run}\nstage: ${stage}\nstatus: complete\n${extra}---\n\n${artifactBody(stage, sections)}`)
+}
+
+// Developer half (stage defaults, overridable) → marker → pipeline half. The
+// PR draft has no pipeline half, so no marker. A caller that passes ONLY
+// developer sections gets no marker either — that is the shape the
+// human_part validator is asked to accept.
+export function artifactBody(stage, sections) {
+  const defaults = HUMAN_DEFAULTS[stage] ?? {}
+  const human = { ...defaults }
+  const pipeline = {}
+  for (const [name, text] of Object.entries(sections)) {
+    if (name in defaults || name === 'Questions for you') human[name] = text
+    else pipeline[name] = text
+  }
+  const render = obj => Object.entries(obj).map(([name, text]) => `## ${name}\n${text}\n`).join('\n')
+  const humanText = render(human)
+  if (Object.keys(pipeline).length === 0) return humanText
+  return `${humanText}\n${HUMAN_MARKER_LINE}\n\n${render(pipeline)}`
 }
 
 export function readState(runDir) {

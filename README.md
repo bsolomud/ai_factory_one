@@ -39,6 +39,13 @@ before the code existed. SCRIBE must leave the repo with a probe of that name,
 the plan's `## Coupling` table cites it. That loop is the only mechanism here
 that lowers the round count over time; the gates above only stop it rising.
 
+REVIEW itself runs until a round comes back clean (`review_converged`): a fresh
+reviewer per round, and advisory or pre-existing findings count, because the PR
+reviewer raises them anyway. A finding ends fixed, refuted (`--rejected`), or
+deferred by the developer with a sentence the PR carries (`--deferred`,
+`deferred_in_pr`). Measured 2026-10-29: the PRs on this team that merge without
+comments come from exactly that loop, run before the PR opens.
+
 Its absence was the measurable asymmetry: a repo's review skill accretes a rule
 per retrospective (one pilot repo's cites 397 PR numbers), while the
 implementing side accreted nothing — 10 knowledge facts across 29 runs, none of
@@ -92,8 +99,12 @@ mapping. The addon installs the upstream binary, registers the MCP server in
 `~/.claude.json`, and pre-approves ONLY its read-only query tools. Index each
 repo once (`codebase-memory-mcp cli index_repository --repo-path <repo>` —
 one repo at a time, not a parent folder); the background watcher keeps the
-index fresh. Agents fall back to plain grep when a repo isn't indexed, so
-nothing breaks without it.
+index fresh. Runs work in their own worktrees, which the index does not
+cover: `pipeline status` names the main checkout's project as the run's
+`code_graph`, with the snapshot commit and how many files the run's tree has
+moved since, and the handoff passes that line to every research agent. Agents
+fall back to plain grep when a repo isn't indexed, so nothing breaks without
+it.
 
 > **`command not found` after installing?** The upstream installer puts the
 > binary in `~/.local/bin`, which is NOT on the default macOS PATH. Claude
@@ -197,7 +208,13 @@ Stage agents also use a few verbs directly, and they matter enough to name here:
 |------|----------------|
 | `pipeline check` | The **dry run**: the gate's own validators, nothing recorded, no round-trip. Every stage runbook requires it before `advance` — 67 of the pilot's 81 blocked events were defects a stage could have found itself, for free. |
 | `pipeline amend-boundary <path> --reason` | The change needs a file the approved plan did not foresee. Appends one audited line to `## Amendments` (the approved sections stay frozen) and the boundary check honors it. `no_touch` is still refused. The boundary was **816 of 887** recorded block reasons. |
-| `pipeline round` / `pipeline finding` | The round ledger above. `--missed-by` names the probe the store owes. |
+| `pipeline allow-touch --commit <sha> --reason` | A commit the developer explicitly asked for changed `no_touch` files (e.g. regenerated API docs). Exempts exactly that commit's content from `no_touch` — a later edit is caught again — logged as `touch_allowed` and appended to `## Amendments`. |
+| `pipeline pr-opened <url\|number>` | Right after the PR is opened: records its number, url and the head it was opened at; `pipeline status` shows it as `pr` for CI and PR feedback. |
+| `pipeline base-health` | A run stacked on a branch other than the trunk: asks the base's own CI whether it is red by itself, so inherited failures read as "base red". TEST requires it on a stacked run. |
+| `pipeline decision-changed --was "…" --now "…" --reason "…"` | The developer reversed an earlier decision. Appends it to the plan's `## Amendments`; the PR draft must then state the new decision word for word, and a PR published before the change must be re-published (`pr-opened` again) before the CI gate passes. |
+| `pipeline round` / `pipeline finding` | The round ledger above. `--missed-by` names the probe the store owes; `--round <n> --rejected` or `--deferred "<sentence for the PR>"` settles a finding of a closed round. |
+| `pipeline retro collect\|finish\|list` | The review retro's data side (see `/pipeline-retro`): gathers reviewer comments on closed run PRs into a private batch, and records them as looked at once the proposals are NDA-clean. |
+| `pipeline nda-check [--self <files>]` | The NDA line, mechanically. Default: the retro proposals, strictly. |
 | `pipeline permissions [--merge]` | Host allow-rules derived from the repo's own verified commands. Emit-only unless asked. |
 
 Piloting it? See **[PILOT.md](PILOT.md)** for the run-one-ticket playbook and
@@ -212,6 +229,35 @@ reconstructs everything from disk (`git > artifacts > state.json`).
 The model is hook-denied: `git push` before the PR gate is approved, writes to
 `no_touch` paths, and edits to state files (fail-open when no pipeline run is
 active — normal Claude usage is untouched).
+
+## Review retro — `/pipeline-retro`, and the NDA line
+
+The per-repo knowledge SCRIBE writes is the project's: its conventions, its
+probes, its code. `/pipeline-retro` harvests the other kind of lesson, the one
+about the **tool**: what reviewers found on the pipeline's closed PRs, set
+against what the pipeline's own review found before each PR opened. For every
+miss it decides where the pipeline should have caught it and how (a stage, a
+reviewer step, a validator), and writes **generic proposals** to
+`~/.ai_factory_one/retro/proposals.md`. You accept or decline each one; the
+accepted ones are built in an ai_factory_one session, with tests.
+
+You run it by hand. It is standalone: it never touches a run, a stage, a
+project repo or the pipeline's source. Its raw evidence
+(`~/.ai_factory_one/retro/batches/`) stays on your machine.
+
+The projects the pipeline runs on are under NDA, and the tool is shared, so
+what crosses from a project into the tool is checked by `pipeline nda-check`:
+- **Strict** (the retro proposals; `pipeline retro finish` refuses until it
+  passes): no ticket ids, PR numbers, addresses, links, code blocks, project
+  paths, names of an onboarded org, repo or reviewer, nor any identifier or
+  uncommon word that occurs in a project's tracked files and not in the tool's
+  own text.
+- **`--self <files>`** (the tool's source): ticket ids, PR numbers, addresses
+  and the named terms. A test runs the pattern half on every commit; the named
+  half needs the projects on the machine, so run `pipeline nda-check --self
+  $(git ls-files)` before pushing.
+- `~/.ai_factory_one/nda-terms.txt`: your own list of names that must never
+  appear (product names, clients), one per line. It never leaves the machine.
 
 ## Onboarding — `/pipeline onboard <path to repo>`
 

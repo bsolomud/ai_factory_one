@@ -4,16 +4,21 @@ stage: __STAGE__
 status: draft
 ---
 
-# Retro — __RUN__
+# Retro — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated. -->
-> **RETRO · __RUN__** — <!-- OUTCOME, e.g. "3 learnings routed · no substantive plan drift" -->
->
-> **Learnings** <!-- n --> · **Routed** <!-- n -->
->
-> **TL;DR** — <!-- 1–2 sentences: the headline learning from this run. -->
->
-> **Needs you** — <!-- e.g. "OK to update the repo docs as proposed?", or "Nothing." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). -->
+
+## What we learned
+<!-- 2–5 bullets, each a lesson a teammate could act on next week, in plain
+     words: what surprised us, what cost a round of rework, what to do
+     differently. Where a lesson became a doc change or a note for the next
+     run, say so in the same bullet. -->
+
+## Questions for you
+<!-- ONLY if a proposed doc change needs the developer's OK. Delete otherwise. -->
+
+# Pipeline details
 
 ## Plan-vs-shipped
 <!-- Diff the approved plan (with amendments) against what shipped. Every

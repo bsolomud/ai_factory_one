@@ -7,9 +7,10 @@ or reinterpret subtasks is a plan amendment, not a breakdown decision.
 `artifacts/02-plan.md` (approved).
 
 ## Output
-`artifacts/03-progress.md`: transcribe the plan's numbered subtasks into
-`## Subtasks` as an unchecked checklist (`- [ ] 1. <title>`); write `None.`
-under `## Deviations`.
+`artifacts/03-progress.md`: above the `# Pipeline details` line, `## Where we
+are` says in 2–4 plain sentences which step is next; below it, transcribe the
+plan's numbered subtasks into `## Subtasks` as an unchecked checklist
+(`- [ ] 1. <title>`) and write `None.` under `## Deviations`.
 
 ## Procedure
 0. Sanity-check the plan's decomposition before transcribing: if a subtask makes
@@ -33,6 +34,7 @@ under `## Deviations`.
    developer — a parallel run may have claimed it.
 
 ## Done when
-Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Artifact complete,
+`## Where we are` (above the `# Pipeline details` line) says in 2–4 plain
+sentences which step is next — no pipeline vocabulary. Artifact complete,
 cursor set, branch ready; run `pipeline advance`. This gate
 is auto-approvable — report and STOP.

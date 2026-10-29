@@ -64,10 +64,26 @@ export function resolveSlot(profile, slot) {
     .filter(e => e && e.run)
 }
 
+// A profile command reduced to the prefix a host permission rule can match:
+// leading VAR=VAL assignments dropped, then tokens taken until the first flag
+// or {placeholder}. `TZ=UTC yarn jest {targeted_specs}` → `yarn jest`.
+export function commandPrefix(cmd) {
+  const tokens = String(cmd).trim().split(/\s+/)
+  const out = []
+  let i = 0
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
+  for (; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t.startsWith('-') || t.includes('{') || t.includes('&&') || t.includes('|')) break
+    out.push(t)
+  }
+  return out.join(' ')
+}
+
 // Files changed vs the base branch — what "this change" means. By default TRACKED
 // changes only (`git diff --name-only <base>` covers committed + uncommitted edits
 // to tracked files). Ambient untracked files (stray .md/.json, editor scratch) are
-// NOT the change and must never be fed to a linter — MB-46745 hit exactly this:
+// NOT the change and must never be fed to a linter — a pilot run hit exactly this:
 // untracked files were globbed into rubocop, which errored parsing them as Ruby
 // and blocked the gate. The write-boundary check opts INTO untracked
 // (`includeUntracked: true`) because a run's brand-new, not-yet-committed file is
@@ -174,10 +190,14 @@ export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
 // foo_test.sh, bar.test.js, bar.spec.tsx) but deliberately excludes the
 // non-runnable inhabitants of test dirs — factories, rails_helper.rb,
 // spec/support/**, Jest setup files. Feeding those to the runner errors the
-// whole invocation (MB-47027: a changed spec/factories/*.rb passed to rspec →
-// FactoryBot::DuplicateDefinitionError → gate false-BLOCKED). Repos with
+// whole invocation (a pilot run: a changed factory file passed to the test runner →
+// a duplicate-definition error → gate false-BLOCKED). Repos with
 // other conventions (e.g. Python's test_*.py) set profile.test_file_pattern.
 const DEFAULT_TEST_FILE_RE = /(_test|_spec|\.test|\.spec)\.[^./]+$/
+
+export function isTestFile(file, profile) {
+  return (profile?.test_file_pattern ? new RegExp(profile.test_file_pattern) : DEFAULT_TEST_FILE_RE).test(file)
+}
 
 // Targeted tests for the changed files, via the profile's test_layout mapping
 // (src-prefix glob → test dir). Conservative: only returns test files that

@@ -4,18 +4,24 @@ stage: __STAGE__
 status: draft
 ---
 
-# PR Feedback — __RUN__
+# PR Feedback — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated.
-     This artifact accumulates across feedback rounds — keep the header reflecting
-     the LATEST round; superseded rounds live in ## History. -->
-> **PR FEEDBACK · __RUN__** — <!-- OUTCOME, e.g. "round 1 triaged · 2 code changes proposed, 1 disputed" -->
->
-> **PR** <!-- #id --> · **Round** <!-- n --> · **Comments** <!-- n unresolved -->
->
-> **TL;DR** — <!-- 1–2 sentences: what the reviewers want, what you propose. -->
->
-> **Needs you** — <!-- e.g. "3 reviewer comments: I suggest accept, accept, reject — decide each.", or "Nothing yet." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). This file accumulates
+     across feedback rounds — the half above describes the LATEST round;
+     superseded rounds live in '## History'. -->
+
+## What reviewers want
+<!-- One bullet per reviewer comment, in plain words: what they asked for,
+     whether they are right, and what you propose (change it / answer them /
+     push back). The developer decides each — write it so they can decide
+     from this list alone. -->
+
+## Questions for you
+<!-- The decisions this round needs: "accept 1 and 2, reject 3 — agree?"
+     Always present here; the developer's call is the point of this gate. -->
+
+# Pipeline details
 
 ## Comments
 <!-- One row per unresolved review thread THIS round. Verify each claim against

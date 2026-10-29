@@ -4,23 +4,28 @@ stage: __STAGE__
 status: draft
 ---
 
-# CI Analysis — __RUN__
+# CI Analysis — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated.
-     This artifact accumulates across the CI loop — keep the header reflecting the
-     LATEST run; per-run detail lives in ## Runs analyzed. -->
-> **CI · __RUN__** — <!-- OUTCOME, e.g. "green · PR #988 mergeable" or "red · 2 failing" -->
->
-> **CI** <!-- green / red --> · **PR** <!-- #id / state --> · **Red runs** <!-- n -->
->
-> **TL;DR** — <!-- 1–2 sentences: current CI state. -->
->
-> **Needs you** — <!-- e.g. "CI is green — merge PR #988 when ready.", or "Nothing yet." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). This file accumulates
+     across the CI loop — the half above describes the LATEST run; per-run
+     detail lives in '## Runs analyzed'. -->
+
+## Where CI stands
+<!-- 2–4 sentences. Is the PR green and mergeable? If not: what failed, in
+     product words, whether it is our change or the build, and what was done
+     about it. Link the PR. -->
+
+## Questions for you
+<!-- ONLY when the developer has to act: "green — merge when ready", or a
+     re-run they must trigger. Delete otherwise. -->
+
+# Pipeline details
 
 ## Runs analyzed
 <!-- A table, one row per CI run. Columns: Run | Result | Failed jobs.
-     Appended per run — this artifact accumulates across the CI loop; keep the
-     BLUF header reflecting the LATEST run.
+     Appended per run — this artifact accumulates across the CI loop; keep
+     '## Where CI stands' reflecting the LATEST run.
      | Run | Result | Failed jobs |
      |-----|--------|-------------|
      | link/id | red / green | which jobs failed, or "—" | -->

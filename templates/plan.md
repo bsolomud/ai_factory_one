@@ -5,22 +5,63 @@ status: draft
 critic: { rounds: 0, blocking_open: 0 }
 ---
 
-# Implementation Plan — __RUN__
+# Plan — __RUN__: <!-- the task in one plain line — same line as the context artifact's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated,
-     but the first thing the developer and the next stage read — fill it before
-     status: complete. Keep it to these few lines. -->
-> **PLAN · __RUN__** — <!-- DECISION in one line: the chosen approach. -->
->
-> **Files** <!-- N --> · **Subtasks** <!-- M --> · **Critic** <!-- R rounds, B blocking -->
->
-> **TL;DR** — <!-- 1–2 sentences: what ships and why. -->
->
-> **Needs you** — <!-- e.g. "OK to build it this way? Two files change.", or the one question blocking the build. -->
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Everything above '# Pipeline details' is for a PERSON — a junior
+     developer who has never opened this pipeline. One screen: under 300
+     words of prose plus a diagram when it earns its place. Machine-checked
+     (human_part, plain_language): no pipeline vocabulary, no line with three
+     bold spans. The plan is NOT the place to re-argue the context: copy
+     '## What we're doing' and '## Why' from 01-context.md (tighten, don't
+     expand) and add ONLY how we will build it.
+
+     The argument that got you here — evidence, alternatives, what the design
+     check and the adversarial check said and how you answered — goes BELOW
+     the marker. Three pilot plans ran to 3,000+ words of prose above the
+     first table because that argument was written here. It is not for the
+     reader; it is for the record.
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+## What we're doing
+<!-- Copied from 01-context.md, tightened. 3–5 sentences, product words. -->
+
+## Why
+<!-- Copied from 01-context.md. Keep the diagram if there was one. -->
+
+## How we'll build it
+<!-- A numbered list of steps, in the order they land. One sentence per step,
+     naming the part of the app in WORDS ("the password-reset email", "the
+     sync job"), not paths — the paths are in '## Affected files' below.
+     Say what each step changes for the person using the product. If a step
+     needs a decision from the developer, it is a question in the next
+     section, not a paragraph here.
+
+     If the build has a moving part that is easier to see than to read — a
+     new flow, a state change, a hand-off between systems — draw it (mermaid
+     flowchart or sequenceDiagram, plain-word labels).
+
+     1. Make the reset email's button open the reset form even when the
+        identity service cannot produce a link — today it falls back to the
+        service's login page.
+     2. Add a note to the auth docs so the next person knows the fallback
+        exists.
+     3. Cover both with tests. -->
+
+## Questions for you
+<!-- ONLY if the build needs a decision from the developer. One bullet per
+     question, answerable in a sentence, with your proposed default in
+     brackets. Delete the section when there is nothing to ask. -->
+
+# Pipeline details
+
+<!-- Below this line: written for the stage agents and the gates. Dense is
+     fine — tables, backticked paths, exact commands, ids. -->
 
 ## Approach
-<!-- The technical approach: chosen pattern and why. Confidence notes: which
-choices rest on curated docs vs inference. -->
+<!-- The technical approach: chosen pattern and why; alternatives rejected and
+     why; confidence notes (curated docs vs inference). This is where the
+     reasoning lives — keep it out of the half above. -->
 
 ## Affected files
 <!-- A table, one row per file. Columns: Path (backticked) | Change | New?
@@ -67,7 +108,7 @@ choices rest on curated docs vs inference. -->
 
      | Subject | Evidence command | Hits | Disposition |
      |---------|------------------|------|-------------|
-     | `auto_sync_mode` writers | `git grep -n auto_sync_mode -- app lib` | 3 | 2 reads (safe), 1 writer — the form, fixed here; no backfill exists ⇒ AC#2 covers existing rows |
+     | `notify_mode` writers | `git grep -n notify_mode -- app lib` | 3 | 2 reads (safe), 1 writer — the form, fixed here; no backfill exists ⇒ AC#2 covers existing rows |
 
      Write 'None — <why this change couples to nothing outside its own diff>' if
      it genuinely does. A bare 'None.' is refused: the reason is the check. -->
@@ -80,23 +121,35 @@ choices rest on curated docs vs inference. -->
      |------|----------|----------|
      | what could go wrong | med | AC#N / how it's covered | -->
 
-
 ## Subtasks
 <!-- A table, one row per subtask. Columns: # | Subtask | Files.
      Files = this subtask's slice of '## Affected files' (backticked,
      comma-separated). Machine-checked (subtask_coupling): every affected file
      belongs to exactly ONE subtask, and a source file plus the spec it breaks
      must be in the SAME subtask — advance gates each subtask on green.
-     Each subtask small enough to review as ONE diff and commit.
+     Each subtask small enough to review as ONE diff. The subtask numbers
+     line up with the steps in '## How we'll build it' above.
      | # | Subtask | Files |
      |---|---------|-------|
      | 1 | what lands | `app/x.rb`, `spec/x_spec.rb` | -->
 
 ## Testing strategy
-<!-- Per subtask: which test type and why, per the repo's conventions. -->
+<!-- Per subtask: which test type and why, per the repo's conventions. Every
+     acceptance criterion (AC#n) traceable to a subtask and a test. -->
+
+## Critic trace
+<!-- What the design check and the adversarial check said, and what you did
+     about each finding — a table, one row per finding: Round | Finding |
+     Response. Rejected findings carry the reasoning. This is the ONLY place
+     the critic conversation is recorded; it never leaks into '## Approach'
+     and never above the marker. 'None — no findings.' if the checks were clean.
+     | Round | Finding | Response |
+     |-------|---------|----------|
+     | 1 | B1: the fallback also fires on timeout | handled — see Risks row 2 | -->
 
 ## Open questions
-<!-- Blocking vs non-blocking. Write 'None.' if none. -->
+<!-- Blocking vs non-blocking. Blocking ones are ALSO asked above in
+     '## Questions for you', in plain words. Write 'None.' if none. -->
 
 ## Amendments
 <!-- Append-only after approval. Never rewrite approved sections. -->

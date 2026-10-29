@@ -18,8 +18,29 @@ and the artifacts from disk; only findings summaries travel between them.
 3. The existing code to change and similar merged changes in history.
 
 ## Output
-`artifacts/02-plan.md`. Required sections: Approach, Affected files, Coupling,
-Risks, Subtasks, Testing strategy, Open questions.
+`artifacts/02-plan.md`. Two halves, split by the `# Pipeline details` line:
+- **Above it — for the developer**: What we're doing, Why, How we'll build it,
+  and (only when there is one) Questions for you.
+- **Below it — for the agents and the gates**: Approach, Affected files,
+  Coupling, Risks, Subtasks, Testing strategy, Critic trace, Open questions.
+
+## Writing the developer's half (machine-checked: human_part, plain_language)
+The plan is not the place to re-argue the context. Copy `## What we're doing`
+and `## Why` from `01-context.md` (tighten, never expand; keep its diagram),
+then add `## How we'll build it`: a numbered list of steps in the order they
+land, one sentence per step, naming the part of the app in words ("the
+password-reset email", "the sync job") — the paths live in `## Affected
+files`. The step numbers line up with `## Subtasks`. When a moving part is
+easier to see than to read — a new flow, a state change, a hand-off between
+systems — draw it (mermaid, plain-word labels).
+
+Same rules as the context: a junior who has never opened this pipeline is the
+reader; under 300 words of prose, no line with three bold spans, none of the
+pipeline's vocabulary. Three pilot plans ran to 3,000+ words above the first
+table because the argument with the critic was written into `## Approach` and
+the summary on top of it. That argument goes into `## Critic trace` and the
+evidence into `## Approach` — both below the marker. The half above states
+what will be built; the half below proves it is right.
 
 ## The coupling ledger (the section that decides the review round count)
 Measured on two pilot PRs: of 23 reviewer findings, the blockers were almost
@@ -93,6 +114,10 @@ change and its spec-rewrite were split, and the change subtask blocked repeatedl
      the advisory findings to Finalize and continue. The second round exists
      to verify fixes to blocking findings, not to re-read a clean plan.
    - **Advisory findings** → folded into `## Risks` / `## Open questions`.
+   - **Every finding and its response** — accepted, handled, or rejected with
+     reasoning — is one row of `## Critic trace`. That table is the only place
+     the critic conversation is recorded: never argue with the critic inside
+     `## Approach`, and never above the marker.
    - The critique is stored as `artifacts/02-plan-critique.md`.
 4. **Finalize** (`pipeline-planner`, mode finalize): verify traceability —
    every acceptance criterion → a subtask + a testing-strategy entry; every
@@ -105,9 +130,9 @@ change and its spec-rewrite were split, and the change subtask blocked repeatedl
    file whose spec sits in a different subtask, a path that does not exist.
 
 ## Done when
-`pipeline check` is GREEN apart from the finalization stamp. Fill the BLUF
-header at the top (Decision, Files/Subtasks/Critic counts, TL;DR,
-Needs you). Critic clean (or escalated), sections complete, `status: complete` set LAST;
+`pipeline check` is GREEN apart from the finalization stamp. The developer's
+half reads as one screen: what we're doing, why, the numbered steps, and a
+question only if one is open. Critic clean (or escalated), sections complete, `status: complete` set LAST;
 run `pipeline advance`; present the plan summary (approach, subtasks, risks,
 open questions) — the developer approves with `! pipeline approve`, then
 `/pipeline work` starts the breakdown. STOP. The approved plan is FROZEN —

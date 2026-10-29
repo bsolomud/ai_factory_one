@@ -147,7 +147,7 @@ All shipped and test-covered (51/51 as of 2026-07-20); see Progress log for comm
   after shipping). The auto-applying `detectBase` from 2026-09-17 cost a run on
   its second day: a developer standing on a personal wrap-up branch one commit
   ahead of the trunk had the run based on it, aborted at CONTEXT, and recreated
-  from master by hand (`portal/runs/MB-47141.aborted-wrong-base-20260924`).
+  from master by hand.
   Detection cannot distinguish "the feature branch this work stacks on" from
   "the branch I happen to be standing on" — and the framework proposal that
   started this asked to *ask for or validate* the base, which is what it now

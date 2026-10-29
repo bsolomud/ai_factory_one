@@ -16,18 +16,23 @@ proofs: []
 proof_stamp:
 ---
 
-# Test Report — __RUN__
+# Test Report — __RUN__: <!-- the task in one plain line — same as the plan's title -->
 
-<!-- BLUF header: a human-facing summary above the first ## section. Not validated,
-     but the first thing the developer and the next stage read — fill it before
-     status: complete. -->
-> **TEST · __RUN__** — <!-- OUTCOME at a glance, e.g. "136 examples green · coverage complete" -->
->
-> **Tests** <!-- N green --> · **Coverage** <!-- complete / gaps --> · **Deferred** <!-- n -->
->
-> **TL;DR** — <!-- 1–2 sentences: coverage state and any gap. -->
->
-> **Needs you** — <!-- e.g. "Two edge cases left untested (below) — OK to ship without them?", or "Nothing." -->
+<!-- Above '# Pipeline details': for a person, one screen, plain words
+     (machine-checked: human_part, plain_language). -->
+
+## What we checked
+<!-- 3–6 sentences or short bullets. Which behaviours now have a test that
+     fails without the change and passes with it — in product words ("the
+     reset email's button", not a spec path). What is NOT covered by a test
+     and has to be checked by hand, and how. Say plainly whether anything was
+     left out. -->
+
+## Questions for you
+<!-- ONLY if a gap needs the developer's call ("OK to ship without a test for
+     X?"). Delete otherwise. -->
+
+# Pipeline details
 
 ## Coverage audit
 <!-- A table, one row per changed file. Columns: File | Tests | Gaps.
@@ -51,6 +56,12 @@ proof_stamp:
 
 ## Added tests
 <!-- Tests written/extended in this stage. Only green tests are presented. -->
+
+## Base health
+<!-- Only for a run stacked on a branch other than the trunk, and required
+     when 'pipeline base-health' says RED (machine-checked: base_health): each
+     failing test that also fails on the base, with the base's CI link — "base
+     red", not this change. Delete the section on a trunk-based run. -->
 
 ## Deferred
 <!-- Edge cases deferred at the gate — recorded, not dropped. 'None.' if none. -->

@@ -10,8 +10,9 @@ gets a test or an explicit, written reason it doesn't.
    neighboring test files, never import foreign style.
 
 ## Output
-`artifacts/04-test-report.md`. Required sections: Coverage audit,
-Risk-to-test map, Added tests, Deferred.
+`artifacts/04-test-report.md`. Above the `# Pipeline details` line, for the
+developer: What we checked (and Questions for you, only when there is one).
+Below it: Coverage audit, Risk-to-test map, Added tests, Deferred.
 
 ## Procedure (executed by `pipeline-qa`, fresh context)
 - Audit coverage against the branch diff; build the risk-to-test map as a table
@@ -44,6 +45,13 @@ Risk-to-test map, Added tests, Deferred.
   and its staleness stamp, the profile checks — and records nothing. A stale
   stamp or an unaccounted criterion found here costs one edit; found at
   `advance` it costs a blocked event and a fresh dispatch.
+- **Stacked run (based on a branch, not the trunk)?** Run
+  `pipeline base-health` before calling any failure pre-existing — the gate
+  requires it (`base_health`). RED → every failure that also fails on the
+  base goes under `## Base health` with the CI link, as "base red"; the rest
+  are this change's. UNKNOWN → run that test at the base tip before calling
+  it pre-existing. A pilot run logged 45 inherited failures as "pre-existing"
+  without naming the base, and CI re-diagnosed all of them from scratch.
 - If a profile check blocks for reasons you cannot map to the branch diff,
   follow the pipeline's **gate-triage** skill
   (`~/.claude/skills/gate-triage/SKILL.md`): reproduce, classify, then act.
@@ -51,6 +59,9 @@ Risk-to-test map, Added tests, Deferred.
   `## Deferred` — the developer sees them at the gate; recorded, not dropped.
 
 ## Done when
-Fill the BLUF header at the top (Outcome, TL;DR, Needs you). Report complete
+`## What we checked` (above the `# Pipeline details` line) tells the
+developer, in product words, what now has a test that fails without the
+change, what has to be checked by hand and how, and what was left out — no
+spec paths, no pipeline vocabulary. Report complete
 (`status: complete` LAST), tests green; `pipeline advance`;
 present the report and STOP.

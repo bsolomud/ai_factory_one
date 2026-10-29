@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
-import { AC_TABLE, STANDARD_PROFILE, cli, completeArtifact, installProfile, sandbox, standardRepo, writeFile } from './helpers.js'
+import { STANDARD_PROFILE, cli, completeArtifact, contextSections, installProfile, sandbox, standardRepo, writeFile } from './helpers.js'
 
 // The measurement and accretion layers. Everything here exists because of one
 // pilot finding: across 29 runs the pipeline reported a median of 0 correction
@@ -150,7 +150,7 @@ test('probes: learned searches are matched to the diff, and a fact without one i
 
   // With no paths given it takes the run's own diff.
   completeArtifact(runDir, 'artifacts/01-context.md', 'R-1', 'CONTEXT',
-    { Requirements: 'r', 'Acceptance criteria': AC_TABLE, Decisions: 'd', Findings: 'f', 'Open questions': 'None.' })
+    contextSections({ Decisions: 'd' }))
   repo.write('src/app.sh', 'echo app-v2\n')
   const fromDiff = run(['probes'])
   assert.match(fromDiff.scope, /diff vs master/)
@@ -273,6 +273,27 @@ test('doctor --env judges the TREE, and names the command that repairs it', () =
   assert.match(run(['doctor']).note, /--env/)
 })
 
+// A pilot run: the repo's env_checks would have said "node_modules behind
+// yarn.lock" before CONTEXT — nobody ran them. Starting a run runs them.
+test('new-run judges the checkout once, before the first stage, and never blocks on it', () => {
+  const { home, repo, run } = startedRun('env-start-repo', { profile: ENV_PROFILE })
+  void run
+  const again = cli(['new-run', 'R-2'], { home, cwd: repo.dir })
+  assert.equal(again.verdict, 'CREATED', 'gaps are reported, the run is still created')
+  assert.equal(again.env, 'ENV_GAPS')
+  assert.deepEqual(again.env_gaps, [{ check: 'assets built', fix: './build-assets.sh' }])
+  assert.match(again.env_note, /before CONTEXT/)
+
+  repo.write('built.marker', 'ok\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'built')
+  const ok = cli(['new-run', 'R-3'], { home, cwd: repo.dir })
+  assert.equal(ok.env, 'OK')
+
+  const wt = cli(['new-run', 'R-4', '--worktree'], { home, cwd: repo.dir })
+  assert.equal(wt.env, undefined, 'a fresh tree has had no setup yet — not judged')
+  assert.match(wt.env_next, /doctor --env --run R-4/)
+})
+
 // The case the whole verb exists for. A run with its own worktree works THERE,
 // and that tree is the one that is missing the build output or the generated
 // config — while the main checkout, where the developer is standing, is fine.
@@ -338,4 +359,51 @@ test('permissions --merge preserves settings it did not write', () => {
   assert.deepEqual(settings.permissions.deny, ['Bash(rm:*)'])
   assert.ok(settings.permissions.allow.includes('Bash(ls:*)'), 'existing allow-rules survive')
   assert.ok(settings.permissions.allow.includes('Bash(./lint.sh:*)'))
+})
+
+// A pilot run: the pre-PR review found the invalid-UTF-8 500, filed it "advisory,
+// pre-existing", and the gate let it through to be the PR's first comment.
+test('review_converged: review until a round comes back clean; deferring is recorded and reaches the PR', async () => {
+  const { validators } = await import('../src/validators.js')
+  const { readState } = await import('../src/state.js')
+  const { run, runDir, repo, runId } = startedRun('converge-repo')
+  const ctx = output => ({ runDir, repoDir: repo.dir, profile: {}, state: readState(runDir), stageDef: { output }, stageName: 'X', config: {} })
+  const converged = () => validators.review_converged(ctx('artifacts/05-review.md'))
+  const utf8 = ['--class', 'correctness', '--missed-by', 'malformed-input-probe', '--summary', 'advisory, pre-existing: invalid UTF-8 still 500s']
+
+  assert.match(converged().reasons[0], /no review round is recorded/)
+  run(['round', 'open', 'pre-pr'])
+  assert.match(converged().reasons[0], /still open/)
+  run(['finding', ...utf8])
+  run(['round', 'close'])
+  let v = converged()
+  assert.equal(v.ok, false, 'an advisory finding still stands')
+  assert.match(v.reasons[0], /1 finding\(s\) still standing.*invalid UTF-8/)
+
+  // Fixed, and a fresh round finds nothing.
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])
+  assert.equal(converged().ok, true)
+
+  // PR feedback arrives: the code changed after the clean round.
+  run(['round', 'open', 'pr']); run(['round', 'close'])
+  assert.match(converged().reasons[0], /latest round is round 3 \(pr feedback\)/)
+
+  // The developer defers it at the gate, after the reviewer closed the round.
+  run(['round', 'open', 'pre-pr']); run(['finding', ...utf8]); run(['round', 'close'])
+  assert.equal(converged().ok, false)
+  assert.equal(run(['finding', ...utf8, '--round', '4', '--deferred']).verdict, 'ERROR', 'a deferral carries its PR sentence')
+  assert.equal(run(['finding', ...utf8, '--round', '9', '--rejected']).verdict, 'ERROR', 'no such round')
+  const note = 'Input with invalid UTF-8 still returns 500; a follow-up ticket tracks it.'
+  assert.equal(run(['finding', ...utf8, '--round', '4', '--deferred', note]).recorded.disposition, 'deferred')
+  assert.equal(converged().ok, true, 'the later record settles the finding')
+  assert.equal(run(['round', 'list']).rounds.find(r => r.n === 4).findings, 1, 'the settling record is not a second finding')
+  assert.equal(run(['metrics', '--run', runId]).findings_missed_by['malformed-input-probe'], 2, 'rounds 1 and 4, not the settling record')
+
+  const draft = guidance => completeArtifact(runDir, 'artifacts/06-pr-draft.md', runId, 'PR', { 'Reviewer guidance': guidance })
+  draft('Read the controller first.')
+  v = validators.deferred_in_pr(ctx('artifacts/06-pr-draft.md'))
+  assert.equal(v.ok, false)
+  assert.match(v.reasons[0], /word for word: "Input with invalid UTF-8/)
+  draft(`Read the controller first. ${note}`)
+  assert.equal(validators.deferred_in_pr(ctx('artifacts/06-pr-draft.md')).ok, true)
 })

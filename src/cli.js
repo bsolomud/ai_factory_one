@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
-import { changedFiles, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
+import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { boundaryAmendments, parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -13,6 +13,10 @@ import { runValidators } from './validators.js'
 import { couplingRow, matchingProbes, probeIssues, readProbes } from './probes.js'
 import { checkoutBranch, createWorktree, deleteBranch, mainWorktreeDir, removeWorktree } from './worktree.js'
 import * as paths from './paths.js'
+import { codeGraph } from './codegraph.js'
+import { baseHealth, isStacked } from './basehealth.js'
+import { ndaCheck, termsFile } from './nda.js'
+import { collect as retroCollect, finish as retroFinish, proposalsFile, readLedger, retroDir } from './retro.js'
 
 // Exit codes: 0 = success verdicts, 1 = BLOCKED/error. A non-zero exit surfaces
 // as a tool error to the model — a far stronger signal than prose.
@@ -188,6 +192,8 @@ const commands = {
       run_dir: runDir,
       knowledge_dir: paths.knowledgeDir(ctx.slug),
       worktree: state.git?.worktree || null,
+      pr: readEvents(runDir).filter(e => e.event === 'pr_opened').map(({ number, url, head, branch }) => ({ number, url, head, branch })).at(-1) ?? null,
+      code_graph: codeGraph(repoDir)?.line ?? null,
       ...(staleNote && { stale_note: staleNote }),
       next_action: nextAction(state)
     })
@@ -290,6 +296,8 @@ const commands = {
     // worktree_setup is surfaced, never executed: deps install can be slow,
     // credentialed, or interactive — the dispatcher/developer runs it.
     const setup = worktree ? resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run) : []
+    const env = startEnv(ctx, worktree, runId)
+    if (env.env) appendEvent(runDir, { event: 'env_checked', verdict: env.env, gaps: env.env_gaps ?? [] })
     return emit({
       verdict: 'CREATED',
       run: runId,
@@ -299,7 +307,9 @@ const commands = {
       base,
       ...(baseCandidate && { base_candidate: baseCandidate, base_question: baseQuestion }),
       ...(worktree && { worktree }),
-      ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' })
+      code_graph: codeGraph(worktree || ctx.repoDir)?.line ?? null,
+      ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' }),
+      ...env
     })
   },
 
@@ -501,6 +511,109 @@ const commands = {
     })
   },
 
+  // The opened PR, on the record. A pilot run's PR stage could put its PR only in
+  // a free-text feedback note, so CI and pr-feedback had to rediscover it.
+  // Event-sourced: status reads the latest, a rebuilt state loses nothing.
+  'pr-opened'(positional, flags) {
+    const { ctx, runDir } = loadRun(flags)
+    const ref = String(positional[0] || flags.url || '').trim()
+    const number = (ref.match(/\/pull\/(\d+)/) || ref.match(/^#?(\d+)$/) || [])[1]
+    if (!number) return emit({ verdict: 'ERROR', error: 'usage: pipeline pr-opened <PR url | number>' }, 1)
+    const url = /^https?:\/\//.test(ref) ? ref : null
+    const head = headSha(ctx.repoDir)
+    const branch = currentBranch(ctx.repoDir)
+    const pr = { number: Number(number), url, head, branch }
+    appendEvent(runDir, { event: 'pr_opened', ...pr })
+    return emit({ verdict: 'OK', pr })
+  },
+
+  // Review retro, run by hand and on its own: never touches a run, a repo or a
+  // stage. `collect` gathers what reviewers said on the runs' closed PRs into a
+  // private batch; the analyst turns misses into generic proposals; `finish`
+  // records the PRs as looked at, and only once proposals.md is NDA-clean.
+  retro(positional, flags) {
+    const action = positional[0] || 'list'
+    if (action === 'collect') {
+      const since = typeof flags.since === 'string' ? flags.since : null
+      if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) return emit({ verdict: 'ERROR', error: '--since takes YYYY-MM-DD' }, 1)
+      const r = retroCollect({ since, repo: typeof flags.repo === 'string' ? flags.repo : null, again: Boolean(flags.again) })
+      const comments = r.items.reduce((n, i) => n + i.external.length, 0)
+      return emit({
+        verdict: r.items.length ? 'OK' : 'NOTHING_NEW',
+        batch: r.batch,
+        batch_file: path.join(r.batch_dir, 'batch.json'),
+        prs: r.items.map(i => ({ slug: i.slug, run: i.run, pr: i.pr.number, comments: i.external.length, pre_pr_findings: i.pre_pr_findings.length })),
+        comments,
+        skipped: r.skipped,
+        proposals: proposalsFile(),
+        next_action: r.items.length
+          ? `spawn the pipeline-retro agent on ${path.join(r.batch_dir, 'batch.json')}; then 'pipeline nda-check' and 'pipeline retro finish ${r.batch}'`
+          : 'no closed PR from a pipeline run is waiting for a retro'
+      })
+    }
+    if (action === 'finish') {
+      const stamp = positional[1]
+      if (!stamp || !fs.existsSync(path.join(retroDir(), 'batches', stamp, 'batch.json'))) {
+        return emit({ verdict: 'ERROR', error: 'usage: pipeline retro finish <batch> — the batch id that collect printed' }, 1)
+      }
+      const file = proposalsFile()
+      const violations = fs.existsSync(file) ? ndaCheck(fs.readFileSync(file, 'utf8'), { mode: 'strict' }) : []
+      if (violations.length) {
+        return emit({ verdict: 'BLOCKED', file, violations, next_action: 'rewrite each flagged line generically, then finish again — the batch stays open until proposals.md is clean' }, 1)
+      }
+      return emit({ verdict: 'OK', batch: stamp, recorded: retroFinish(stamp), proposals: file })
+    }
+    if (action === 'list') {
+      const ledger = readLedger()
+      return emit({ verdict: 'OK', prs_looked_at: ledger.length, last: ledger.at(-1) ?? null, proposals: proposalsFile() })
+    }
+    return emit({ verdict: 'ERROR', error: 'usage: pipeline retro <collect [--since YYYY-MM-DD] [--repo <slug>] [--again] | finish <batch> | list>' }, 1)
+  },
+
+  // NDA gate. Default: the retro proposals, strictly. --self: the files given
+  // (the tool's own source), hard patterns and named terms only.
+  'nda-check'(positional, flags) {
+    const mode = flags.self ? 'self' : 'strict'
+    // `--self <file>` reads as a flag value; it is a file to check.
+    const files = [...(typeof flags.self === 'string' ? [flags.self] : []), ...positional]
+    if (!files.length) files.push(proposalsFile())
+    const found = []
+    for (const f of files) {
+      if (!fs.existsSync(f)) continue
+      for (const v of ndaCheck(fs.readFileSync(f, 'utf8'), { mode })) found.push({ file: f, ...v })
+    }
+    return emit({
+      verdict: found.length ? 'VIOLATIONS' : 'OK',
+      mode,
+      checked: files.filter(f => fs.existsSync(f)),
+      violations: found,
+      terms_file: termsFile()
+    }, found.length ? 1 : 0)
+  },
+
+  // Is the branch this run stacks on green by itself? Only asked of a stacked
+  // run (base is not the trunk); see basehealth.js for why.
+  'base-health'(_, flags) {
+    const { ctx, runDir, state } = loadRun(flags)
+    const trunk = ctx.profile?.conventions?.base_branch || 'master'
+    const base = state.git?.base
+    if (!isStacked(base, trunk)) {
+      appendEvent(runDir, { event: 'base_health', base, verdict: 'NOT_STACKED' })
+      return emit({ verdict: 'NOT_STACKED', base, note: `the run is based on the trunk ('${trunk}') — failures there are classified as usual` })
+    }
+    const health = baseHealth(ctx.repoDir, base)
+    appendEvent(runDir, { event: 'base_health', base, verdict: health.verdict, checked_sha: health.checked_sha ?? null, red: health.red ?? [] })
+    const next = {
+      RED: `the base '${health.base}' is red on its own CI — before calling any failure this run's, check it against these runs; a failure that also fails there is "base red" (say so in the test report's '## Base health', with the link), not a defect of this change`,
+      PENDING: `CI on the base is still running — re-run 'pipeline base-health' before classifying failures`,
+      GREEN: health.tip_checked
+        ? `the base tip is green on CI — a failing test in this run is this run's until shown otherwise`
+        : `CI last judged ${health.checked_sha?.slice(0, 11)}, not the base tip ${health.tip?.slice(0, 11)} — green there, unproven at the tip`,
+      UNKNOWN: `could not tell (${health.reason}) — for a failure you believe pre-existing, run that test at the base tip before calling it so`
+    }[health.verdict]
+    return emit({ ...health, next_action: next })
+  },
+
   // Widen the approved plan's write boundary, on the record. The boundary check
   // is by far the loudest thing in the pilot log — 816 of 887 recorded block
   // reasons — and a large share of those were legitimate: the change really did
@@ -547,6 +660,85 @@ const commands = {
       artifact: planRel,
       note: `boundary widened by ${fresh.length} path(s); recorded in the plan's '## Amendments' and the audit log. Re-run 'pipeline advance'. Surface this to the developer at the gate — they approved a plan that did not include these files.`
     })
+  },
+
+  // Exempt a developer-authorized commit from `no_touch`, on the record. A pilot
+  // run: at a gate the developer asked for generated API docs to be
+  // regenerated and committed; `git_clean_within` judges base..HEAD, so every
+  // later check went red on files no later subtask touched, and the only way
+  // out was deleting the rule from the profile by hand. The exemption is keyed
+  // to the commit's CONTENT: a file stays exempt only while it still equals
+  // what that commit left, so a later edit on top of it is caught again. It is
+  // read from the audit log (CLI-written), not from the model-editable plan.
+  'allow-touch'(positional, flags) {
+    const { ctx, config, runDir, state } = loadRun(flags)
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : ''
+    const commit = typeof flags.commit === 'string' ? flags.commit.trim() : ''
+    if (!commit || !reason) {
+      return emit({ verdict: 'ERROR', error: `usage: pipeline allow-touch [<path>…] --commit <sha> --reason "<what the developer asked for>" — only for a commit the developer explicitly asked for; the reason lands in the plan and the audit log` }, 1)
+    }
+    const git = args => execFileSync('git', args, { cwd: ctx.repoDir, encoding: 'utf8', stdio: 'pipe' }).trim()
+    let sha
+    try { sha = git(['rev-parse', '--verify', '--quiet', `${commit}^{commit}`]) } catch { sha = '' }
+    if (!sha) return emit({ verdict: 'ERROR', error: `'${commit}' is not a commit in ${ctx.repoDir}` }, 1)
+    try { git(['merge-base', '--is-ancestor', sha, 'HEAD']) } catch {
+      return emit({ verdict: 'ERROR', error: `${sha.slice(0, 11)} is not on this run's branch (not an ancestor of HEAD in ${ctx.repoDir}) — commit there first` }, 1)
+    }
+    const changed = git(['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', sha]).split('\n').filter(Boolean)
+    const noTouch = ctx.profile?.no_touch || []
+    const wanted = positional.filter(Boolean)
+    const foreign = wanted.filter(p => !changed.includes(p))
+    if (foreign.length) {
+      return emit({ verdict: 'ERROR', error: `${foreign.join(', ')} not changed by ${sha.slice(0, 11)} — an exemption covers only what that commit changed` }, 1)
+    }
+    const exempt = (wanted.length ? wanted : changed).filter(p => matchesAny(p, noTouch))
+    if (!exempt.length) {
+      return emit({ verdict: 'ERROR', error: `${sha.slice(0, 11)} changes no path under a no_touch rule — nothing to exempt. An ordinary out-of-plan file is widened with 'pipeline amend-boundary'.` }, 1)
+    }
+    appendEvent(runDir, { event: 'touch_allowed', stage: state.stage, commit: sha, paths: exempt, reason })
+    const planRel = artifactFor(config, '-plan.md')
+    const planAbs = planRel && path.join(runDir, planRel)
+    if (planAbs && parseArtifact(planAbs)) {
+      const shown = exempt.length > 5 ? `${exempt.slice(0, 5).map(p => `\`${p}\``).join(', ')} and ${exempt.length - 5} more` : exempt.map(p => `\`${p}\``).join(', ')
+      appendToSection(planAbs, 'Amendments', `- no_touch exemption at commit \`${sha.slice(0, 11)}\`: ${shown} — ${reason} (${state.stage}, ${new Date().toISOString().slice(0, 10)})`)
+    }
+    return emit({
+      verdict: 'OK',
+      commit: sha,
+      exempt,
+      note: `${exempt.length} no_touch path(s) exempt while they still match ${sha.slice(0, 11)}; any later edit to them is caught again. Recorded in the audit log${planAbs ? ' and the plan\'s \'## Amendments\'' : ''}. Re-run 'pipeline check'.`
+    })
+  },
+
+  // A decision the developer reverses, on the record. A pilot run:
+  // option A ("every configured item qualifies") was reversed to B after the
+  // PR opened; the code was reworked, but nothing touched the plan or the PR
+  // body, and the next review round found the PR describing the opposite
+  // behaviour. The change lands in the plan's '## Amendments'; the PR gate
+  // then requires the new decision in the draft, and the CI gate requires a
+  // PR opened before the change to be re-published.
+  'decision-changed'(_, flags) {
+    const { config, runDir, state } = loadRun(flags)
+    const str = v => (typeof v === 'string' ? v.trim() : '')
+    const was = str(flags.was)
+    const now = str(flags.now)
+    const reason = str(flags.reason)
+    if (!was || !now) {
+      return emit({ verdict: 'ERROR', error: 'usage: pipeline decision-changed --was "<the decision as recorded>" --now "<the new decision, in the words the PR should use>" [--reason "<why>"] — only for a decision the developer reversed in this conversation' }, 1)
+    }
+    const pr = readEvents(runDir).filter(e => e.event === 'pr_opened').at(-1) ?? null
+    appendEvent(runDir, { event: 'decision_changed', stage: state.stage, was, now, reason, pr: pr?.number ?? null })
+    const planRel = artifactFor(config, '-plan.md')
+    const planAbs = planRel && path.join(runDir, planRel)
+    if (planAbs && parseArtifact(planAbs)) {
+      appendToSection(planAbs, 'Amendments', `- Decision changed: was "${was}" → now "${now}"${reason ? ` — ${reason}` : ''} (${state.stage}, ${new Date().toISOString().slice(0, 10)})`)
+    }
+    const steps = [
+      `reopen the stage the change starts at ('pipeline reopen <stage> --reason …') and carry it through`,
+      `the PR draft must state the new decision word for word ("${now}") — the PR gate checks it`,
+      ...(pr ? [`PR #${pr.number} still describes the old decision: after the PR gate, update its body ('gh pr edit ${pr.number} --body-file …') and re-run 'pipeline pr-opened ${pr.url || pr.number}' — the CI gate checks it`] : [])
+    ]
+    return emit({ verdict: 'OK', was, now, ...(pr && { pr: pr.number }), next_steps: steps })
   },
 
   'set-autonomy'(positional, flags) {
@@ -768,7 +960,7 @@ const commands = {
     }
     if (action === 'close') {
       if (!open) return emit({ verdict: 'ERROR', error: `no round is open — 'pipeline round open <${ROUND_SOURCES.join('|')}>' starts one` }, 1)
-      const findings = events.filter(e => e.event === 'finding_recorded' && e.round === open.n).length
+      const findings = events.filter(e => e.event === 'finding_recorded' && e.round === open.n && !e.settles).length
       appendEvent(runDir, { event: 'round_closed', n: open.n, source: open.source, findings, note: flags.note || '' })
       return emit({ verdict: 'OK', round: open.n, source: open.source, findings, note: `round ${open.n} closed with ${findings} recorded finding(s)` })
     }
@@ -778,7 +970,7 @@ const commands = {
         source: e.source,
         ref: e.ref,
         closed: events.some(c => c.event === 'round_closed' && c.n === e.n),
-        findings: events.filter(f => f.event === 'finding_recorded' && f.round === e.n).length
+        findings: events.filter(f => f.event === 'finding_recorded' && f.round === e.n && !f.settles).length
       }))
       return emit({ verdict: 'OK', rounds, open: open?.n ?? null })
     }
@@ -795,24 +987,43 @@ const commands = {
     const summary = (positional.join(' ').trim() || flags.summary || '').trim()
     const missedBy = typeof flags['missed-by'] === 'string' ? flags['missed-by'].trim() : ''
     if (!FINDING_CLASSES.includes(cls) || !summary || !missedBy) {
-      return emit({ verdict: 'ERROR', error: `usage: pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe name | none> --summary "<one line>" [--source <${ROUND_SOURCES.join('|')}>] [--accepted|--rejected]` }, 1)
+      return emit({ verdict: 'ERROR', error: `usage: pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe name | none> --summary "<one line>" [--source <${ROUND_SOURCES.join('|')}>] [--round <n>] [--accepted|--rejected|--deferred "<plain sentence for the PR>"]` }, 1)
+    }
+    // Deferred = real, left unfixed on the developer's call. The sentence goes
+    // to the PR word for word (deferred_in_pr), so the reviewer reads it from
+    // the author before finding it themselves.
+    const deferred = typeof flags.deferred === 'string' ? flags.deferred.trim() : ''
+    if (flags.deferred !== undefined && !deferred) {
+      return emit({ verdict: 'ERROR', error: `--deferred needs the plain sentence the PR will carry, e.g. --deferred "Input with invalid UTF-8 still returns 500; a follow-up ticket tracks it."` }, 1)
     }
     const events = readEvents(runDir)
     const open = openRound(events)
-    const source = flags.source || open?.source || 'pre-pr'
+    // --round n settles a finding of a round already closed (the developer's
+    // call usually comes at the gate, after the reviewer closed it).
+    const round = flags.round !== undefined ? Number(flags.round) : open?.n ?? null
+    const target = round == null ? null : events.find(e => e.event === 'round_opened' && e.n === round)
+    if (round != null && !target) {
+      return emit({ verdict: 'ERROR', error: `--round ${flags.round}: no such round — 'pipeline round list' shows them` }, 1)
+    }
+    const source = flags.source || target?.source || 'pre-pr'
     if (!ROUND_SOURCES.includes(source)) {
       return emit({ verdict: 'ERROR', error: `--source must be one of: ${ROUND_SOURCES.join(', ')}` }, 1)
     }
-    const verdict = flags.rejected ? 'rejected' : flags.accepted ? 'accepted' : 'recorded'
+    const verdict = flags.rejected ? 'rejected' : deferred ? 'deferred' : flags.accepted ? 'accepted' : 'recorded'
+    // Same summary, same round: a later verdict on a finding already counted.
+    const norm = t => String(t).toLowerCase().replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim()
+    const settles = round != null && events.some(e => e.event === 'finding_recorded' && e.round === round && norm(e.summary) === norm(summary))
     appendEvent(runDir, {
       event: 'finding_recorded',
-      round: open?.n ?? null,
+      round,
       source,
       stage: state.stage,
       class: cls,
       missed_by: missedBy,
       disposition: verdict,
-      summary
+      summary,
+      ...(deferred && { pr_note: deferred }),
+      ...(settles && { settles: true })
     })
     return emit({
       verdict: 'OK',
@@ -1342,17 +1553,7 @@ function envReport(ctx, flags) {
       next_action: `this repo has no 'commands.env_checks' — add them via '/pipeline onboard'. Each is a cheap command that proves the tree can actually run the repo (assets built, generated config present, database loaded), with an optional 'fix:' naming the command that repairs it. Without them, an unprepared tree first announces itself as a failing test deep inside a stage.`
     })
   }
-  const results = []
-  for (const entry of entries) {
-    const name = entry.name || commandPrefix(entry.run) || entry.run
-    try {
-      execSync(entry.run, { cwd: workdir, stdio: 'pipe', timeout: 300_000 })
-      results.push({ check: name, status: 'pass' })
-    } catch (e) {
-      const out = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim().split('\n').slice(-8).join('\n')
-      results.push({ check: name, status: 'fail', exit: e.status ?? null, output: out, fix: entry.fix || null })
-    }
-  }
+  const results = runEnvChecks(entries, workdir)
   const failed = results.filter(r => r.status === 'fail')
   return emit({
     verdict: failed.length ? 'ENV_GAPS' : 'OK',
@@ -1366,6 +1567,39 @@ function envReport(ctx, flags) {
       ? `${failed.length} environment check(s) failed — repair the TREE before reading any gate result as a verdict on the change. ${failed.map(f => f.fix ? `${f.check}: ${f.fix}` : `${f.check}: no fix recorded`).join(' · ')}`
       : `the tree can run this repo's commands — a red gate from here is about the change, not the environment`
   }, failed.length ? 1 : 0)
+}
+
+function runEnvChecks(entries, workdir, timeout = 300_000) {
+  const results = []
+  for (const entry of entries) {
+    const name = entry.name || commandPrefix(entry.run) || entry.run
+    try {
+      execSync(entry.run, { cwd: workdir, stdio: 'pipe', timeout })
+      results.push({ check: name, status: 'pass' })
+    } catch (e) {
+      const out = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim().split('\n').slice(-8).join('\n')
+      results.push({ check: name, status: 'fail', exit: e.status ?? null, output: out, fix: entry.fix || null })
+    }
+  }
+  return results
+}
+
+// The environment, judged once before the first stage. A pilot run needed a
+// profile re-sync and a dependency install before CONTEXT: package.json had moved
+// and node_modules had not — and the repo's env_checks already said so; nobody
+// ran them. A fresh worktree is not judged here (it has had no setup yet, every
+// check would fail for that reason alone); it is told when to ask.
+function startEnv(ctx, worktree, runId) {
+  const entries = resolveSlot(ctx.profile, 'env_checks')
+  if (!entries.length) return {}
+  if (worktree) return { env_next: `after the worktree_setup commands, run 'pipeline doctor --env --run ${runId}' — before CONTEXT` }
+  const failed = runEnvChecks(entries, ctx.repoDir, 120_000).filter(r => r.status === 'fail')
+  if (!failed.length) return { env: 'OK' }
+  return {
+    env: 'ENV_GAPS',
+    env_gaps: failed.map(f => ({ check: f.check, fix: f.fix })),
+    env_note: `this checkout cannot run the repo yet — show the developer the fix command(s) and get them run before CONTEXT, or every later gate reads the environment as a broken change: ${failed.map(f => f.fix ? `${f.check}: ${f.fix}` : `${f.check}: no fix recorded`).join(' · ')}`
+  }
 }
 
 function headSha(repoDir) {
@@ -1385,22 +1619,6 @@ function openRound(events) {
     else if (e.event === 'round_closed' && open && e.n === open.n) open = null
   }
   return open
-}
-
-// A profile command reduced to the prefix a host permission rule can match:
-// leading VAR=VAL assignments dropped, then tokens taken until the first flag
-// or {placeholder}. `TZ=UTC yarn jest {targeted_specs}` → `yarn jest`.
-function commandPrefix(cmd) {
-  const tokens = String(cmd).trim().split(/\s+/)
-  const out = []
-  let i = 0
-  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++
-  for (; i < tokens.length; i++) {
-    const t = tokens[i]
-    if (t.startsWith('-') || t.includes('{') || t.includes('&&') || t.includes('|')) break
-    out.push(t)
-  }
-  return out.join(' ')
 }
 
 function onlyActiveRun(slug) {

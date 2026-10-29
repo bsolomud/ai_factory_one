@@ -358,17 +358,17 @@ test('targetedTests maps changed src files to existing test files only', () => {
 test('targetedTests: non-runnable files under a test dir are never targeted', () => {
   const { root } = sandbox()
   const repo = makeRepo(root, 'v-repo8')
-  repo.write('app/models/one_roster/import.rb', 'class Import; end\n')
-  repo.write('spec/models/one_roster/import_spec.rb', 'ok\n')
+  repo.write('app/models/data_import/import.rb', 'class Import; end\n')
+  repo.write('spec/models/data_import/import_spec.rb', 'ok\n')
   // no trailing slashes, like a real Rails repo's profile — exercises the dir+'/' normalization
   const profile = { test_layout: { 'app/**': 'spec', 'app/packs/**': 'spec/packs' } }
-  assert.deepEqual(targetedTests(repo.dir, ['spec/factories/one_roster/imports.rb'], profile), [], 'factory is not a runnable spec')
+  assert.deepEqual(targetedTests(repo.dir, ['spec/factories/data_import/imports.rb'], profile), [], 'factory is not a runnable spec')
   assert.deepEqual(targetedTests(repo.dir, ['spec/support/shared_contexts/foo.rb'], profile), [], 'support file is not a runnable spec')
   assert.deepEqual(targetedTests(repo.dir, ['spec/rails_helper.rb'], profile), [], 'rails_helper is not a runnable spec')
-  assert.deepEqual(targetedTests(repo.dir, ['spec/models/one_roster/history_spec.rb'], profile), ['spec/models/one_roster/history_spec.rb'])
+  assert.deepEqual(targetedTests(repo.dir, ['spec/models/data_import/history_spec.rb'], profile), ['spec/models/data_import/history_spec.rb'])
   assert.deepEqual(targetedTests(repo.dir, ['spec/packs/foo/bar.test.js'], profile), ['spec/packs/foo/bar.test.js'])
-  assert.deepEqual(targetedTests(repo.dir, ['app/models/one_roster/import.rb'], profile),
-    [path.join('spec/models/one_roster', 'import_spec.rb')], 'src mirroring unaffected')
+  assert.deepEqual(targetedTests(repo.dir, ['app/models/data_import/import.rb'], profile),
+    [path.join('spec/models/data_import', 'import_spec.rb')], 'src mirroring unaffected')
   assert.deepEqual(targetedTests(repo.dir, ['spec_helper.rb'], profile), [], "test dir 'spec' must not prefix-match a sibling like spec_helper.rb")
 })
 

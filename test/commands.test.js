@@ -178,6 +178,7 @@ test('reopen: backward-only, drops later gates, resets downstream artifacts to d
   run(['advance']); assert.equal(run(['approve']).stage, 'TEST')
   ac('artifacts/04-test-report.md', 'TEST', { 'Coverage audit': 'c', 'Risk-to-test map': 'AC#1 covered.', 'Added tests': 'n', Deferred: 'None.' }, proofsFrontmatter(run(['proof-stamp']).proof_stamp))
   run(['advance']); assert.equal(run(['approve']).stage, 'REVIEW')
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])  // a clean review round
   ac('artifacts/05-review.md', 'REVIEW', { 'Blind pass': 'Reads as a greeting change.', Findings: 'None.', Coupling: COUPLING_OK, 'Fixes applied': 'None.', Disputed: 'None.', 'Plan-vs-shipped check': 'ok' }, CLEAN_REVIEW_COUNTS)
   run(['advance']); assert.equal(run(['approve']).stage, 'PR')
 

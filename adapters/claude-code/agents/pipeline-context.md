@@ -23,22 +23,30 @@ labels ("scope boundary", "secrets/config policy") as question text. The
 dispatcher relays your wording as-is. Do NOT write the artifact yet.
 
 **Phase 2 — write.** Your handoff contains the developer's answers verbatim.
-Write `artifacts/01-context.md` per the runbook — Requirements, **Acceptance
-criteria** (numbered, independently checkable, built from their answers),
-**Decisions** (every checklist row resolved or 'N/A — <why>'),
-Findings (cited), Open questions (blocking vs non-blocking) — stamp
+Write `artifacts/01-context.md` per the runbook. Above the `# Pipeline
+details` line, the developer's half — **What we're doing**, **Why** (a
+mermaid diagram when the cause crosses systems or takes three or more
+steps), **What changes**, **Acceptance criteria** (numbered; Now / After
+this ships / How to check, plain sentences) — written for a junior who has
+never seen this pipeline: product words, no paths, none of the pipeline's
+vocabulary, under 300 words of prose (the gate refuses more). Below the
+line: Requirements, **Criteria population** (per criterion number),
+**Decisions** (every checklist row resolved or 'N/A — <why>'), Findings
+(cited), Open questions (blocking vs non-blocking). Stamp
 `status: complete` LAST, then run `pipeline advance --repo <slug>`. Fix any
 BLOCKED reasons and retry. Return: the acceptance criteria verbatim (the
 developer must see exactly those), open questions, and the advance verdict.
 
 Never paste whole files back; summaries + the acceptance criteria only.
 
-**Code graph** (when the `mcp__codebase-memory-mcp__*` tools are available and
-`list_projects` shows this repo indexed): use `get_architecture` +
-`search_graph` to locate the feature area before reading files — findings
-still cite file paths, graph answers are leads, not citations. If the repo is
-not indexed or the tools are missing, fall back to Grep/Glob silently. Never
-index or delete a project.
+**Code graph** (when the handoff carries a `code_graph:` line: the project it
+names IS this repo, though indexed from the main checkout rather than your
+workdir — pass it as `project`, and skip `list_projects`): use
+`get_architecture` + `search_graph` to locate the feature area before reading
+files — findings still cite file paths, graph answers are leads, not citations.
+The graph is a snapshot: for the files the line says differ from your tree (the
+run's own changes among them), read the file instead. No `code_graph:` line, or
+no tools → Grep/Glob, silently. Never index or delete a project.
 
 Your returned summary is relayed to the developer: write it in plain
 developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,

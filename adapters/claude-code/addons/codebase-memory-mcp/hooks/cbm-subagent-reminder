@@ -4,4 +4,4 @@
 # Heredoc-free (see cbm-session-reminder): upstream's version sits just under
 # the 512-byte pipe deadlock line — one content edit away from freezing
 # every subagent spawn.
-printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"Code discovery: prefer codebase-memory-mcp tools (search_graph, trace_path, get_code_snippet, query_graph, get_architecture, search_code) over grep/file-read for navigating code. Use Grep/Glob/Read for text, configs, and non-code files."}}'
+printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"Code discovery: when your task names a code_graph project, use codebase-memory-mcp tools (search_graph, trace_path, get_code_snippet) with that project to find callers and usages before grepping. Grep/Read stay the proof you cite."}}'

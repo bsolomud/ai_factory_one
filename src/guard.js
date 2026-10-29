@@ -1,6 +1,7 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-import { currentBranch, loadProfile, matchesAny } from './profile.js'
+import { commandPrefix, currentBranch, loadProfile, matchesAny, resolveSlot } from './profile.js'
 import { appendEvent, readState } from './state.js'
 import * as paths from './paths.js'
 
@@ -67,7 +68,12 @@ export function guard(mode, input) {
     // Bash needs THE run (its stage keys commit/push rules) — ambiguous → open.
     // Writes are checked even without a resolved run: the write's target path
     // may land in some run's worktree, which identifies the run by itself.
-    if (mode === 'bash') return run ? guardBash(input.tool_input?.command || '', run) : allow()
+    if (mode === 'bash') {
+      const command = input.tool_input?.command || ''
+      const stray = guardStrayTree(command, { repoDir, profile, active })
+      if (stray) return stray
+      return run ? guardBash(command, run, repoDir) : allow()
+    }
     if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, active, cwd })
     if (mode === 'observe') return run ? observeUsage(input, run) : allow()
     return allow()
@@ -96,21 +102,129 @@ function unmarkSession(input) {
   return allow()
 }
 
-function guardBash(command, { state }) {
+function guardBash(command, { state }, repoDir) {
   // Note: `pipeline approve` is NOT hook-blocked. The gate contract lives in
   // the skill: the model may only run it after presenting the gate summary
   // and receiving the developer's explicit confirmation in chat; every
   // approval is recorded in gates[] + events.jsonl for audit.
-  if (/\bgit\s+push\b/.test(command)) {
+  //
+  // Only real git invocations are judged, never text that mentions them:
+  // two pilot runs were blocked on a read-only grep whose pattern
+  // contained the words. And only invocations that can reach THE run's branch:
+  // a developer-ordered deploy push ran from an unrelated worktree.
+  const verbs = gitInvocations(command)
+  if (!verbs.length || !reachesRun(command, state, repoDir)) return allow()
+  if (verbs.includes('push')) {
     const prApproved = state.gates.some(g => g.stage === 'PR' && g.approved) || ['CI', 'SCRIBE', 'DONE'].includes(state.stage)
     if (!prApproved) {
       return deny(`git push is blocked until the PR-stage gate is approved (run is at ${state.stage}). Finish the pipeline stages; the developer approves the PR draft, then pushing is allowed.`)
     }
   }
-  if (/\bgit\s+commit\b/.test(command) && !COMMIT_STAGES.includes(state.stage)) {
+  if (verbs.includes('commit') && !COMMIT_STAGES.includes(state.stage)) {
     return deny(`git commit is not allowed during the ${state.stage} stage — code changes happen in ${COMMIT_STAGES.join('/')}. If this change is needed, it belongs to a subtask (or a plan amendment).`)
   }
   return allow()
+}
+
+// Does this git call act on the run's branch? Yes when the shell is in the
+// run's tree, on the run's branch, or the command names either. A run that has
+// recorded neither a tree nor a branch can only be matched loosely — judge it.
+function reachesRun(command, state, repoDir) {
+  const { worktree, branch } = state.git || {}
+  if (!worktree && !branch) return true
+  const here = realish(repoDir)
+  if (worktree && (realish(worktree) === here || mentionsPath(command, worktree))) return true
+  if (!branch) return !worktree
+  if (currentBranch(repoDir) === branch) return true
+  return shellSegments(command).some(tokens => tokens.some(t => t.split(':').includes(branch) || t.endsWith(`/${branch}`)))
+}
+
+// The git verbs this command actually runs, one per git invocation.
+function gitInvocations(command) {
+  return shellSegments(command)
+    .filter(tokens => tokens[0] === 'git')
+    .map(gitVerb)
+    .filter(Boolean)
+}
+
+// The command split into simple commands, each as tokens: quoted text is
+// blanked first (so `grep "a; git push"` stays one grep), leading env
+// assignments and subshell parens are dropped, the program is basenamed.
+function shellSegments(command) {
+  const blanked = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""')
+  const out = []
+  for (const segment of blanked.split(/&&|\|\||[;|\n]/)) {
+    const tokens = segment.trim().replace(/^[({]+\s*/, '').split(/\s+/).filter(Boolean)
+    while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift()
+    while (tokens.length && ['sudo', 'command', 'exec', 'env', 'time', 'nohup'].includes(tokens[0])) tokens.shift()
+    if (!tokens.length) continue
+    tokens[0] = path.basename(tokens[0])
+    out.push(tokens)
+  }
+  return out
+}
+
+// A stage agent's shell starts in the session's directory on EVERY call, not
+// in the run's worktree — a pilot run ran the suite three times in
+// the developer's main checkout although the handoff named the worktree, and
+// read the results as a verdict on the run's change. Resolution by cwd cannot
+// catch this (cwd is the main checkout, so the run is ambiguous or wrong), so
+// the rule is about the TREE: while every active run works in its own
+// worktree, nothing in an engaged session has business running this repo's
+// checks or changing git state in the main checkout. Only commands that do
+// either are judged — the profile's own commands (repo-agnostic: the same
+// prefixes `pipeline permissions` derives) and tree-changing git verbs; reads
+// stay free. Naming a run's worktree anywhere in the command (`cd <wt> &&`,
+// `git -C <wt>`) is the deliberate form and passes.
+const SHELL_UTILITIES = new Set(['test', '[', 'cd', 'cp', 'mv', 'rm', 'ln', 'ls', 'cat', 'echo', 'mkdir', 'touch', 'true', 'false', 'sh', 'bash'])
+const GIT_TREE_VERBS = new Set(['add', 'commit', 'stash', 'checkout', 'switch', 'reset', 'restore', 'merge', 'rebase', 'cherry-pick', 'apply', 'rm', 'mv', 'clean', 'am', 'revert'])
+
+function guardStrayTree(command, { repoDir, profile, active }) {
+  const trees = active.map(r => r.state.git?.worktree).filter(Boolean)
+  if (!trees.length || trees.length < active.length) return null // a run works in the main checkout itself
+  const here = realish(repoDir)
+  if (trees.some(t => realish(t) === here)) return null // already inside a run's tree
+  if (!runsInTree(command, profile)) return null
+  if (trees.some(t => mentionsPath(command, t))) return null
+  const prefix = trees.length === 1 ? `cd ${trees[0]} && ` : 'cd <the run\'s worktree> && '
+  return deny(`this shell is in ${repoDir}, the main checkout — but every active pipeline run works in its own worktree (${trees.join(', ')}). Checks and git changes run here would test or change the wrong tree. Run it in the run's tree: ${prefix}${command.trim()} — each Bash call starts from the session's directory again, so repeat the cd prefix on every call. If this is the developer's own work in the main checkout, they can run it themselves with '!'.`)
+}
+
+function runsInTree(command, profile) {
+  const signatures = []
+  for (const slot of Object.keys(profile?.commands || {})) {
+    for (const entry of resolveSlot(profile, slot)) {
+      const sig = commandPrefix(entry.run).split(/\s+/).filter(Boolean)
+      if (!sig.length) continue
+      sig[0] = path.basename(sig[0])
+      if (sig.length === 1 && SHELL_UTILITIES.has(sig[0])) continue // `test -s x` (env_checks) must not claim every `test`
+      signatures.push(sig)
+    }
+  }
+  for (const tokens of shellSegments(command)) {
+    if (tokens[0] === 'git' && GIT_TREE_VERBS.has(gitVerb(tokens))) return true
+    if (signatures.some(sig => sig.every((t, i) => tokens[i] === t))) return true
+  }
+  return false
+}
+
+// The subcommand after git's global options (`git -C x -c k=v commit` → commit).
+function gitVerb(tokens) {
+  for (let i = 1; i < tokens.length; i++) {
+    if (['-C', '-c', '--git-dir', '--work-tree'].includes(tokens[i])) { i++; continue }
+    if (tokens[i].startsWith('-')) continue
+    return tokens[i]
+  }
+  return null
+}
+
+function mentionsPath(command, tree) {
+  const forms = new Set([tree, realish(tree)])
+  const home = os.homedir()
+  for (const f of [...forms]) {
+    if (f.startsWith(home + path.sep)) { forms.add('~' + f.slice(home.length)); forms.add('$HOME' + f.slice(home.length)) }
+  }
+  return [...forms].some(f => command.includes(f))
 }
 
 // Canonicalize a possibly-not-yet-existing path (macOS: /var → /private/var
@@ -199,10 +313,9 @@ function activeRuns(slug) {
 // enforcement keyed to an arbitrary run applies the WRONG run's stage rules.
 // No single match → fail open, never guess.
 //
-// Known gap, accepted: guardBash is regex-only, so `git -C <other-worktree>
-// commit` run from a different tree resolves the run by cwd, not the -C
-// target. The validators (commit counts, write boundary) remain the real
-// order-enforcers; the guard is defense-in-depth.
+// Known gap, accepted: with several runs, `git -C <other-worktree> commit`
+// run from a different tree resolves the run by cwd, not the -C target. The
+// validators (commit counts, write boundary) remain the real order-enforcers; the guard is defense-in-depth.
 function resolveRun(active, repoDir) {
   if (active.length <= 1) return active[0] ?? null
   const dir = realish(repoDir)

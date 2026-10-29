@@ -56,8 +56,8 @@ starting over.
 
 ## Done when
 The subtask's code is done, `pipeline check` is green, and `03-progress.md`
-updated (keep the BLUF header's
-subtask count current); run `pipeline advance`
+updated (keep `## Where we are` current — which step is done, which is
+next, in plain words); run `pipeline advance`
 (it re-runs the profile checks and the write-boundary check — its exit code is
 the certification, not your claim). On GATE: present the diff to the developer
 with a short rationale per change, then STOP. Approval moves the cursor to the

@@ -26,6 +26,10 @@ prior decisions.
    artifact contents unless the runbook says the developer must see them
    verbatim (e.g. a proposed fix awaiting approval).
 
+Your shell does not start in the run's tree: every Bash call starts in the
+session's directory, not the handoff's `workdir`. Prefix every command that
+runs the repo's checks or changes git state with `cd <workdir> && …`.
+
 Respect the hard rules: repo writes only in implementation stages; never
 touch state files; never push before the PR gate; never approve anything.
 

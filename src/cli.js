@@ -2,7 +2,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { hashPath, proofStamp, scanAssets } from './scan.js'
+import { hashAtRef, hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
 import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
@@ -68,11 +68,14 @@ const commands = {
     })
   },
 
+  // Evidence is hashed as committed on the base branch — the same place the
+  // staleness check reads it — unless --worktree asks for the working tree.
   hash(positional, flags) {
     const ctx = resolveRepo(flags)
+    const ref = flags.worktree ? null : evidenceRef(ctx, typeof flags.base === 'string' ? flags.base : null)
     const hashes = {}
-    for (const rel of positional) hashes[rel] = hashPath(path.join(ctx.repoDir, rel))
-    return emit({ verdict: 'OK', hashes })
+    for (const rel of positional) hashes[rel] = evidenceHash(ctx, ref, rel)
+    return emit({ verdict: 'OK', hashes, hashed_at: ref || 'working tree' })
   },
 
   // Stamps the proof ledger against the code it was proved on. Run it right
@@ -214,7 +217,7 @@ const commands = {
     // The stale gate lives HERE, not on work in flight: a new run must start
     // from verified evidence, but status downgrades staleness to a note while
     // any run is active (re-sync at most once per run, not once per session).
-    const stale = staleEvidence(ctx)
+    const stale = staleEvidence(ctx, typeof flags.base === 'string' ? flags.base : null)
     if (stale.length) {
       return emit({
         verdict: 'PROFILE_STALE',
@@ -992,7 +995,7 @@ const commands = {
     const summary = (positional.join(' ').trim() || flags.summary || '').trim()
     const missedBy = typeof flags['missed-by'] === 'string' ? flags['missed-by'].trim() : ''
     if (!FINDING_CLASSES.includes(cls) || !summary || !missedBy) {
-      return emit({ verdict: 'ERROR', error: `usage: pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe name | none> --summary "<one line>" [--source <${ROUND_SOURCES.join('|')}>] [--round <n>] [--accepted|--rejected|--deferred "<plain sentence for the PR>"]` }, 1)
+      return emit({ verdict: 'ERROR', error: `usage: pipeline finding --class <${FINDING_CLASSES.join('|')}> --missed-by <probe name | none> --summary "<one line>" [--source <${ROUND_SOURCES.join('|')}>] [--round <n>] [--accepted|--rejected|--prevented|--deferred "<plain sentence for the PR>"]` }, 1)
     }
     // Deferred = real, left unfixed on the developer's call. The sentence goes
     // to the PR word for word (deferred_in_pr), so the reviewer reads it from
@@ -1014,7 +1017,8 @@ const commands = {
     if (!ROUND_SOURCES.includes(source)) {
       return emit({ verdict: 'ERROR', error: `--source must be one of: ${ROUND_SOURCES.join(', ')}` }, 1)
     }
-    const verdict = flags.rejected ? 'rejected' : deferred ? 'deferred' : flags.accepted ? 'accepted' : 'recorded'
+    // prevented: caught in the plan, fixed before any code was written.
+    const verdict = flags.rejected ? 'rejected' : deferred ? 'deferred' : flags.prevented ? 'prevented' : flags.accepted ? 'accepted' : 'recorded'
     // Same summary, same round: a later verdict on a finding already counted.
     const norm = t => String(t).toLowerCase().replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim()
     const settles = round != null && events.some(e => e.event === 'finding_recorded' && e.round === round && norm(e.summary) === norm(summary))
@@ -1649,14 +1653,29 @@ function runForWorktree(slug, repoDir) {
 // Staleness triggers: the evidence files the profile was derived from, AND
 // every repo-bound skill/doc (a team editing their review skill should be
 // noticed on the next run, not silently ignored).
-function staleEvidence(ctx) {
+// The ref a profile's evidence is judged at: the base branch as the remote has
+// it, else the local branch; null (→ the working tree) when neither exists.
+function evidenceRef(ctx, base) {
+  const b = String(base || ctx.profile?.conventions?.base_branch || 'master').replace(/^origin\//, '')
+  for (const ref of [`origin/${b}`, b]) {
+    try { execFileSync('git', ['-C', ctx.repoDir, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { stdio: 'ignore' }); return ref } catch { /* next */ }
+  }
+  return null
+}
+
+function evidenceHash(ctx, ref, rel) {
+  return ref ? hashAtRef(ctx.repoDir, ref, rel) : hashPath(path.join(ctx.repoDir, rel))
+}
+
+function staleEvidence(ctx, base) {
   const stale = []
+  const ref = evidenceRef(ctx, base)
   for (const [file, recorded] of Object.entries(ctx.profile?.evidence_hashes || {})) {
-    if ((hashPath(path.join(ctx.repoDir, file)) ?? 'missing') !== recorded) stale.push(file)
+    if ((evidenceHash(ctx, ref, file) ?? 'missing') !== recorded) stale.push(file)
   }
   for (const [capability, binding] of Object.entries(ctx.profile?.bindings || {})) {
     if (binding?.source !== 'repo' || !binding.path || !binding.sha) continue
-    if ((hashPath(path.join(ctx.repoDir, binding.path)) ?? 'missing') !== binding.sha) {
+    if ((evidenceHash(ctx, ref, binding.path) ?? 'missing') !== binding.sha) {
       stale.push(`binding:${capability} (${binding.path})`)
     }
   }

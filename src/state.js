@@ -20,7 +20,10 @@ export const SKIP_KINDS = ['no_command', 'not_configured', 'no_target', 'declare
 // the run — a reviewer on the PR, a red CI — and until this ledger existed the
 // metrics counted only in-run corrections, so a run with two PR rounds still
 // reported human_rounds: 0. You cannot drive to ≤2 a number nobody records.
-export const ROUND_SOURCES = ['pre-pr', 'pr', 'ci']
+// 'plan': the architect's and critic's passes over the plan. What they catch
+// never reaches code, and before this source existed the metrics read a run
+// whose design the critic changed as one where nothing was found (four strikes).
+export const ROUND_SOURCES = ['plan', 'pre-pr', 'pr', 'ci']
 
 // What a finding was ABOUT, which is the same question as "which probe would
 // have caught it". `missed_by` names that probe (or 'none' when nothing

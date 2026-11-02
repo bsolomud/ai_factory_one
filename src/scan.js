@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -49,6 +50,40 @@ function firstDoc(dir) {
 
 // Content hash of a file OR a directory (sorted walk) — the staleness trigger
 // for evidence files and skill bindings.
+// The same digest as hashPath, of `rel` as committed at `ref` — so a profile's
+// evidence is judged against the branch runs start from, not whatever branch
+// the shared main checkout happens to have out. Reading the working tree made
+// the profile look stale whenever the developer stood on a feature branch:
+// five recorded strikes, each a re-sync that changed nothing. null when `rel`
+// does not exist at `ref`.
+export function hashAtRef(repoDir, ref, rel) {
+  const git = (args, enc = 'utf8') => execFileSync('git', ['-C', repoDir, ...args], { encoding: enc, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 28 })
+  let type
+  try { type = git(['cat-file', '-t', `${ref}:${rel}`]).trim() } catch { return null }
+  const h = createHash('sha256')
+  if (type === 'blob') {
+    h.update(git(['show', `${ref}:${rel}`], 'buffer'))
+  } else {
+    const prefix = rel.replace(/\/$/, '') + '/'
+    const files = git(['ls-tree', '-r', '--name-only', ref, '--', rel]).split('\n').filter(Boolean)
+      .map(f => f.slice(prefix.length))
+      .filter(f => !f.split('/').some(seg => seg === '.git' || seg === 'node_modules'))
+    // walk() order: directory entries sorted by name at each level.
+    files.sort((a, b) => {
+      const A = a.split('/'), B = b.split('/')
+      for (let i = 0; i < Math.min(A.length, B.length); i++) {
+        if (A[i] !== B[i]) {
+          if (i === A.length - 1 && i < B.length - 1) return A[i] < B[i] ? -1 : 1
+          return A[i] < B[i] ? -1 : 1
+        }
+      }
+      return A.length - B.length
+    })
+    for (const f of files) { h.update(f); h.update(git(['show', `${ref}:${prefix}${f}`], 'buffer')) }
+  }
+  return 'sha256:' + h.digest('hex')
+}
+
 export function hashPath(abs) {
   if (!fs.existsSync(abs)) return null
   const h = createHash('sha256')

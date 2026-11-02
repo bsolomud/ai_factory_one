@@ -407,3 +407,18 @@ test('review_converged: review until a round comes back clean; deferring is reco
   draft(`Read the controller first. ${note}`)
   assert.equal(validators.deferred_in_pr(ctx('artifacts/06-pr-draft.md')).ok, true)
 })
+
+// Four strikes: what the architect and critic caught never reached the ledger,
+// so a run whose design they changed read as one where nothing was found.
+test('plan rounds: findings caught in the plan are recorded as prevented, and are not PR rounds', () => {
+  const { run, runId } = startedRun('plan-round-repo')
+  assert.equal(run(['round', 'open', 'plan']).verdict, 'OK')
+  assert.equal(run(['finding', '--class', 'coupling', '--missed-by', 'fallback-consumers', '--prevented', '--summary', 'the new default is read by a job']).recorded.disposition, 'prevented')
+  run(['round', 'close'])
+  run(['round', 'open', 'pre-pr']); run(['round', 'close'])
+  const m = run(['metrics', '--run', runId])
+  assert.equal(m.findings_prevented, 1)
+  assert.equal(m.rounds_to_merge, 1, 'plan and pre-PR rounds happen inside the run')
+  assert.deepEqual(m.rounds_by_source, { plan: 1, 'pre-pr': 1 })
+  assert.equal(m.findings_missed_by['fallback-consumers'], 1, 'SCRIBE still owes the probe')
+})

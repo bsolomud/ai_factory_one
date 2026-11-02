@@ -227,7 +227,10 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
      it the advisory findings to fold into Risks/Open questions — no second
      critic pass. Blocking findings → planner (`mode: revise`) → ONE fresh
      critic re-check (hard cap 2 rounds; still blocking → escalate to the
-     developer). Relay only findings summaries between them.
+     developer). Relay only findings summaries between them. Around the
+     architect and critic passes, keep the ledger: `pipeline round open plan`,
+     one `pipeline finding … --prevented` per blocking finding, `round close`
+     once the plan is final.
    - **BREAKDOWN / PR / CI / SCRIBE** → **pipeline-stage-runner**.
    - **IMPLEMENT** → **pipeline-implementer** (current subtask from
      `substate`; it implements, checks green, advances — commits only if

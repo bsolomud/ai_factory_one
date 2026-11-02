@@ -77,6 +77,7 @@ bindings:
   assert.equal(cli(['status'], { home, cwd: repo.dir }).verdict, 'NO_ACTIVE_RUN', 'fresh hash → not stale')
 
   repo.write('.claude/skills/code-review/SKILL.md', '# repo review skill\nrules CHANGED\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'skill changed on the base branch') // an uncommitted edit is not the base
   const stale = cli(['status'], { home, cwd: repo.dir })
   assert.equal(stale.verdict, 'PROFILE_STALE')
   assert.match(stale.changed_evidence.join(' '), /binding:review/)
@@ -100,6 +101,7 @@ bindings:
   assert.equal(created.verdict, 'CREATED', 'fresh evidence → the run starts')
 
   repo.write('.claude/skills/code-review/SKILL.md', '# repo review skill\nrules CHANGED\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'skill changed on the base branch') // an uncommitted edit is not the base
   const status = cli(['status'], { home, cwd: repo.dir })
   assert.equal(status.verdict, 'ACTIVE_RUN', 'staleness never walls work in flight')
   assert.match(status.stale_note, /profile evidence changed/)

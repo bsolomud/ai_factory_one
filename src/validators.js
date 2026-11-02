@@ -6,7 +6,7 @@ import { artifactFor } from './config.js'
 import { proofStamp } from './scan.js'
 import { isStacked } from './basehealth.js'
 import { claimRef, writtenClaims } from './claims.js'
-import { changedFiles, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
+import { changedFiles, diffBase, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
 import { readEvents, SKIP_KINDS } from './state.js'
 
 // Every validator: (ctx, param) → {ok:true} | {ok:false, reasons:[...]} | {skip:true, reason}.
@@ -212,7 +212,7 @@ export const validators = {
     }
     let diff = ''
     try {
-      diff = execFileSync('git', ['diff', base, '-U0', '--no-color'], { cwd: ctx.repoDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      diff = execFileSync('git', ['diff', diffBase(ctx.repoDir, base), '-U0', '--no-color'], { cwd: ctx.repoDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     } catch {
       return skip(`could not diff against '${base}' — secret scan skipped, recorded as UNVERIFIED`, 'no_target')
     }
@@ -348,8 +348,12 @@ export const validators = {
   // words recorded with it (a pilot run: the PR body described the
   // reversed behaviour for a whole review round).
   decisions_current(ctx) {
-    const changes = readEvents(ctx.runDir).filter(e => e.event === 'decision_changed')
-    if (!changes.length) return ok()
+    const all = readEvents(ctx.runDir).filter(e => e.event === 'decision_changed')
+    if (!all.length) return ok()
+    // A decision changed twice is a chain (A → B, then B → C): only its last
+    // wording is owed. A pilot run's draft was blocked for omitting B, the
+    // wording the developer had already replaced.
+    const changes = all.filter((c, i) => !all.slice(i + 1).some(later => normClaim(later.was) === normClaim(c.now)))
     const rel = ctx.stageDef.output
     const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
     if (!artifact) return fail(`artifact ${rel} does not exist yet`)

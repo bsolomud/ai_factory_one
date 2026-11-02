@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { isTestFile, matchesAny } from './profile.js'
+import { diffBase, isTestFile, matchesAny } from './profile.js'
 
 // Claims the change itself writes down. A code comment, a doc sentence or a
 // user-visible message is read later as a fact about the code, and no gate
@@ -42,7 +42,7 @@ function addedLines(repoDir, base, ambient) {
   const out = []
   let file = null
   let line = 0
-  for (const l of run(repoDir, ['diff', '-U0', '--no-color', '--no-ext-diff', base]).split('\n')) {
+  for (const l of run(repoDir, ['diff', '-U0', '--no-color', '--no-ext-diff', diffBase(repoDir, base)]).split('\n')) {
     if (l.startsWith('+++ ')) { file = l === '+++ /dev/null' ? null : l.slice(6); continue }
     const hunk = l.match(/^@@ -\S+ \+(\d+)(?:,\d+)? @@/)
     if (hunk) { line = Number(hunk[1]); continue }

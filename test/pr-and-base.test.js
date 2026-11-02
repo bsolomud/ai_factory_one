@@ -141,3 +141,17 @@ test('decision-changed: recorded in the plan, required in the draft, re-publishe
   run(['pr-opened', 'https://github.com/acme/app/pull/12'])
   assert.equal(validators.pr_body_current(ctx('artifacts/07-ci-analysis.md')).ok, true, 're-published after the change')
 })
+
+// A pilot run: a decision changed twice, and the draft was blocked for omitting
+// the wording the developer had already replaced.
+test('decisions_current: a chain of changes owes only its last wording', () => {
+  const { repo, run, runDir } = started('chain-repo')
+  const ctx = { runDir, repoDir: repo.dir, profile: {}, state: readRunState(runDir), stageDef: { output: 'artifacts/06-pr-draft.md' }, stageName: 'PR', config: {} }
+  completeArtifact(runDir, 'artifacts/02-plan.md', 'R-1', 'PLAN', { Amendments: 'None.' })
+  run(['decision-changed', '--was', 'retry three times', '--now', 'retry once'])
+  run(['decision-changed', '--was', 'Retry **once**', '--now', 'never retry; alert instead'])
+  completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'R-1', 'PR', { Description: 'We never retry; alert instead.' })
+  assert.equal(validators.decisions_current(ctx).ok, true, 'the superseded "retry once" is not owed')
+  completeArtifact(runDir, 'artifacts/06-pr-draft.md', 'R-1', 'PR', { Description: 'We retry once.' })
+  assert.match(validators.decisions_current(ctx).reasons[0], /never retry; alert instead/)
+})

@@ -59,7 +59,8 @@ developer to choose ONE binding mode:
    pass on top).
 
 Record every binding in the profile with a content hash (get it from
-`pipeline hash <path> --repo <slug>`) so edits to a bound asset trigger
+`pipeline hash <path> --repo <slug>` — it hashes the file as committed on the
+base branch, where staleness is judged, not the checkout) so edits to a bound asset trigger
 `PROFILE_STALE` on the next run — the developer is asked to re-confirm, not
 silently bypassed.
 

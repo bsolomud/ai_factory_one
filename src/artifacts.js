@@ -85,10 +85,37 @@ export function acAccounting(ids, mapText, deferredText) {
 // path-like tokens (contain '/' or carry an extension) qualify. A token with
 // whitespace or shell/glob characters is a command or pattern, never a path —
 // backticked commands in plan prose false-blocked real runs (FP-2).
+//
+// Three pilot runs lost a whole PLAN round each to prose read as paths (28,
+// 10 and 16 false reasons): method chains (`a.session_keys`), constants
+// (`A::B.site`), URL paths (`/sso`), rule ids and `try/catch`. So: no `::`, no
+// leading `/`, no URL; a token without a `/` is a file only when its extension
+// is a known file extension.
+const FILE_EXTENSIONS = new Set(('rb rake ru gemspec erb haml slim builder jbuilder js mjs cjs ts tsx jsx vue svelte json yml yaml ' +
+  'md mdx rst adoc txt csv tsv html htm xml svg css scss sass less sql sh bash zsh fish ps1 bat py pyi go rs java kt kts scala ' +
+  'php ex exs eex heex leex c h cc cpp hpp cs swift m mm dart lua pl pm r toml ini cfg conf env lock log properties gradle ' +
+  'tf hcl proto graphql gql po pot mo png jpg jpeg gif webp ico pdf keep example sample template tpl dockerfile gitignore ' +
+  'gitattributes editorconfig rspec rubocop nvmrc tool-versions ruby-version node-version').split(' '))
 const cleanPath = token => {
   const cleaned = token.replace(/:\d+(-\d+)?$/, '').trim()
-  if (/[\s*{}$]/.test(cleaned)) return null
-  return cleaned.includes('/') || /\.\w+$/.test(cleaned) ? cleaned : null
+  if (/[\s*{}$]/.test(cleaned) || cleaned.includes('::') || cleaned.startsWith('/') || /^\w+:\/\//.test(cleaned)) return null
+  if (cleaned.includes('/')) return cleaned
+  const ext = cleaned.match(/\.([\w-]+)$/)
+  return ext && FILE_EXTENSIONS.has(ext[1].toLowerCase()) ? cleaned : null
+}
+
+// The first cell of a markdown table row; a pipe inside backticks or escaped
+// as \| does not end it.
+function firstCell(line) {
+  const body = line.replace(/^\s*\|/, '')
+  let inTick = false
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]
+    if (c === '`') inTick = !inTick
+    else if (c === '\\' && body[i + 1] === '|') i++
+    else if (c === '|' && !inTick) return body.slice(0, i)
+  }
+  return body
 }
 
 // Backticked paths on one line — the shared extraction rule for every section
@@ -124,14 +151,18 @@ export function boundaryAmendments(body) {
 // Paths mentioned in a section: backticked tokens and bare path-like words.
 // A line annotated "(new)" lists a file the plan will CREATE — exempt from
 // existence checks. Trailing :123 line references are stripped.
+// On a table row only the FIRST cell is the claim (the template's Path
+// column): the Change column is prose about the file, and its backticked
+// method names and commands were read as paths.
 export function pathsInSection(text) {
   const paths = []
   for (const line of text.split('\n')) {
     if (!carriesPathClaims(line)) continue
     const isNew = /\(new\)/i.test(line)
-    const tokens = [...line.matchAll(/`([^`]+)`/g)].map(m => m[1])
+    const claim = /^\s*\|/.test(line) ? firstCell(line) : line
+    const tokens = [...claim.matchAll(/`([^`]+)`/g)].map(m => m[1])
     if (tokens.length === 0) {
-      for (const word of line.split(/[\s,]+/)) {
+      for (const word of claim.split(/[\s,]+/)) {
         if (/^[\w.@-]+(\/[\w.@-]+)+$/.test(word)) tokens.push(word)
       }
     }

@@ -107,6 +107,13 @@ change and its spec-rewrite were split, and the change subtask blocked repeatedl
    revises (or the disagreement goes under `## Open questions`).
 3. **Adversarial check** (`pipeline-critic`, per `stages/plan-critic.md`):
    - The dispatcher records each round: `pipeline set-substate critic_round=<n>`.
+   - **What the architect and the critic catch goes on the round ledger.** Open
+     `pipeline round open plan` before the architect's pass; record every
+     BLOCKING finding of the architect or the critic with
+     `pipeline finding --class <…> --missed-by <the search the planner should
+     have run | none> --prevented --summary "<one line>"`; close the round
+     when the plan is final. A design flaw caught here is the cheapest round
+     there is, and unrecorded it reads as a run where nothing was found.
    - **Blocking findings** → planner revises (mode revise), fresh critic
      re-checks. Hard cap 2 rounds; still blocking → both positions attached
      to `## Open questions`, escalated to the developer.

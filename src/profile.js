@@ -171,6 +171,30 @@ export function detectBase(repoDir, profileBase) {
   }
 }
 
+// What "this change" is diffed from: the newest common ancestor of HEAD with
+// the base as the remote has it and as the local branch has it. Diffing the
+// working tree against a base TIP counts every commit the base gained since
+// the branch left it as the run's own change, reversed: a stale or moved local
+// trunk produced 215 phantom files in one pilot run, blocked advances, and
+// narrowed a review in another (three strikes). Falls back to `base` itself
+// when git cannot answer.
+export function diffBase(repoDir, base) {
+  const b = String(base || 'master').replace(/^origin\//, '')
+  const git = args => execFileSync('git', args, { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const bases = []
+  for (const ref of [`origin/${b}`, b]) {
+    try { git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]) } catch { continue }
+    try { bases.push(git(['merge-base', ref, 'HEAD'])) } catch { bases.push(git(['rev-parse', ref])) }
+  }
+  if (!bases.length) return base
+  // The newest: one that every other candidate is an ancestor of.
+  return bases.find(c => bases.every(o => o === c || isAncestor(repoDir, o, c))) || bases[0]
+}
+
+function isAncestor(repoDir, a, b) {
+  try { execFileSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: repoDir, stdio: 'ignore' }); return true } catch { return false }
+}
+
 export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
   const out = new Set()
   const run = args => {
@@ -186,7 +210,7 @@ export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {
   // or directory" and false-BLOCKS the gate for every later stage. Same failure
   // class as the untracked-files note above — the linter must only ever see files
   // that are on disk right now.
-  for (const f of run(['diff', '--name-only', '--diff-filter=d', base]).split('\n')) if (f.trim()) out.add(f.trim())
+  for (const f of run(['diff', '--name-only', '--diff-filter=d', diffBase(repoDir, base)]).split('\n')) if (f.trim()) out.add(f.trim())
   if (includeUntracked) {
     for (const f of run(['ls-files', '--others', '--exclude-standard']).split('\n')) if (f.trim()) out.add(f.trim())
   }

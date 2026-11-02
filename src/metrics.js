@@ -64,7 +64,9 @@ export function runMetrics(runDir, runId, config = null) {
   // a run that took two PR rounds still reported a median of 0.
   const rounds = events.filter(e => e.event === 'round_opened')
   const findings = events.filter(e => e.event === 'finding_recorded' && !e.settles)
-  const externalRounds = rounds.filter(r => r.source !== 'pre-pr').length
+  // Plan and pre-PR rounds happen inside the run; only PR and CI rounds are
+  // the ones a reviewer or CI forced after the change was shipped.
+  const externalRounds = rounds.filter(r => !['plan', 'pre-pr'].includes(r.source)).length
   // The learning loop's own pass/fail: did this run's lessons get read? A
   // complete retro means SCRIBE ran; a harvest means an aborted run was still
   // mined. 18 of 29 pilot runs were aborted, and every one of them dropped its
@@ -121,6 +123,8 @@ export function runMetrics(runDir, runId, config = null) {
     // Which probe WOULD have caught each finding. The distribution is the work
     // list: every name that is not 'none' is a probe the repo's store still owes.
     findings_missed_by: tally(findings.map(f => f.missed_by || 'unrecorded')),
+    // Caught in the plan by the architect or critic, before any code existed.
+    findings_prevented: findings.filter(f => f.source === 'plan' || f.disposition === 'prevented').length,
     learnings_captured: reachedScribe || harvested,
     // Prefer recorded substate; fall back to counting critic agent spawns, so a
     // dispatcher that ran the critic but forgot `set-substate critic_round` still

@@ -285,6 +285,7 @@ test('used + assets: consulted assets tallied, untouched inventory flagged unuse
   // Bindings need REAL files + hashes: new-run refuses stale evidence.
   repo.write('.claude/skills/code-review/SKILL.md', '# repo review skill\n')
   repo.write('doc/ai/product-map.md', '# curated docs\n')
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'assets') // evidence is read from the base branch
   const sha = hashPath(path.join(repo.dir, '.claude/skills/code-review'))
   const docSha = hashPath(path.join(repo.dir, 'doc/ai'))
   installProfile(home, slug, STANDARD_PROFILE + `bindings:

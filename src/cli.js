@@ -17,6 +17,7 @@ import * as paths from './paths.js'
 import { codeGraph } from './codegraph.js'
 import { baseHealth, isStacked } from './basehealth.js'
 import { ndaCheck, termsFile } from './nda.js'
+import { frameworkProposalsFile, nextId, numberProposals, openProposals, parseProposals, readProposals, summary as proposalSummary, tally } from './proposals.js'
 import { collect as retroCollect, finish as retroFinish, openPrRework, proposalsFile, readLedger, retroDir } from './retro.js'
 
 // Exit codes: 0 = success verdicts, 1 = BLOCKED/error. A non-zero exit surfaces
@@ -599,6 +600,38 @@ const commands = {
       return emit({ verdict: 'OK', prs_looked_at: ledger.length, last: ledger.at(-1) ?? null, proposals: proposalsFile() })
     }
     return emit({ verdict: 'ERROR', error: 'usage: pipeline retro <collect [--since YYYY-MM-DD] [--repo <slug>] [--again] | finish <batch> | list>' }, 1)
+  },
+
+  // The framework-proposals ledger (see proposals.js). No argument: what is
+  // still open, the most-hit first. `P<n>`: one entry in full. --all: every
+  // entry. --number: give unnumbered headings their ids.
+  proposals(positional, flags) {
+    const file = frameworkProposalsFile()
+    if (!fs.existsSync(file)) return emit({ verdict: 'OK', file, entries: 0, next_id: 'P1', open: [] })
+    let text = readProposals(file)
+    let numbered = []
+    if (flags.number) {
+      ({ text, numbered } = numberProposals(text))
+      if (numbered.length) fs.writeFileSync(file, text)
+    }
+    const entries = parseProposals(text)
+    const want = positional[0]
+    if (want) {
+      const e = entries.find(x => x.id && `P${x.id}` === want.toUpperCase())
+      if (!e) return emit({ verdict: 'ERROR', error: `no entry ${want} in ${file}` }, 1)
+      return emit({ verdict: 'OK', ...proposalSummary(e), run: e.run, recurrences: e.recurrences, body: e.body })
+    }
+    const unnumbered = entries.filter(e => !e.id).length
+    return emit({
+      verdict: 'OK',
+      file,
+      entries: entries.length,
+      tally: tally(entries),
+      next_id: `P${nextId(entries)}`,
+      ...(numbered.length && { numbered: numbered.map(n => `P${n.id}`) }),
+      ...(unnumbered && { warning: `${unnumbered} heading(s) have no id — 'pipeline proposals --number' gives them one` }),
+      [flags.all ? 'all' : 'open']: (flags.all ? entries : openProposals(entries)).map(proposalSummary)
+    })
   },
 
   // NDA gate. Default: the retro proposals, strictly. --self: the files given

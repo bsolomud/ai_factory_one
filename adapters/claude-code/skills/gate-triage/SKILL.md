@@ -86,9 +86,9 @@ input:
 | Not locally certifiable | Record it honestly in the artifact's Deferred/Skipped section — it surfaces as unverified at the gate, which is correct. `pipeline declare-na` only with the developer's explicit confirmation, per the dispatcher's rule. |
 
 **Dedupe before filing.** Grep this run's `events.jsonl` for the same
-`slot=` + symptom, and check `~/.ai_factory_one/framework-proposals.md` —
-if the defect is already recorded there, cite the existing entry in your
-feedback note instead of re-deriving it.
+`slot=` + symptom, and check `pipeline proposals --all` — if the defect is
+already recorded there, cite its id (`P<n>`) in your feedback note instead
+of re-deriving it.
 
 ## Hard rules
 

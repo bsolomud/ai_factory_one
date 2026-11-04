@@ -70,7 +70,10 @@ Base branch, branch/PR naming, canonical command when several exist,
 `commands.worktree_setup`: the command(s) that make a fresh checkout of this
 repo runnable (dependency install, config copy) — used when a run gets its own
 worktree for parallel tickets; leave empty if the developer prefers to set
-worktrees up by hand. When the repo has files whose names carry an ordered
+worktrees up by hand. A worktree run gets its own environment number
+(1..15, `worktree_env_max` to change): use `{env_number}` in `worktree_setup`,
+`env_checks` and test commands, or read `PIPELINE_ENV_NUMBER`, to give each
+run its own test database instead of sharing the main checkout's. When the repo has files whose names carry an ordered
 key that must be unique across branches (a migrations directory, numbered
 changelogs), propose `keyed_files: [{ glob, key }]` — `key` a regex on the file
 name whose first group is the key; the PR and CI gates check new ones against

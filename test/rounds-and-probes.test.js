@@ -70,7 +70,7 @@ test('a run with no round ledger reads as unmeasured, never as a clean one round
 test('abort demands the harvest it used to swallow', () => {
   const { run, runDir, runId } = startedRun('abort-repo')
 
-  const aborted = run(['abort'])
+  const aborted = run(['abort', '--outcome', 'abandoned'])
   assert.equal(aborted.verdict, 'ABORTED')
   assert.equal(aborted.harvest, 'required')
   assert.ok(fs.existsSync(aborted.harvest_runbook), 'the abort names a runbook that actually exists')
@@ -80,7 +80,7 @@ test('abort demands the harvest it used to swallow', () => {
 
   // Skipping is allowed, but it is a reasoned, recorded choice.
   const { run: run2, runDir: runDir2, runId: id2 } = startedRun('abort-skip-repo', { runId: 'R-2' })
-  const skipped = run2(['abort', '--no-harvest', 'one-line typo fix, nothing to learn'])
+  const skipped = run2(['abort', '--outcome', 'resolved-without-code', '--no-harvest', 'one-line typo fix, nothing to learn'])
   assert.equal(skipped.harvest, 'skipped')
   assert.match(fs.readFileSync(path.join(runDir2, 'events.jsonl'), 'utf8'), /"event":"harvest_skipped"/)
   assert.match(fs.readFileSync(path.join(runDir2, 'events.jsonl'), 'utf8'), /nothing to learn/)
@@ -310,7 +310,7 @@ test('doctor --env judges the RUN\'s worktree, not the checkout you are standing
   // …and the run gets a fresh tree, which is not. The marker is committed, so a
   // worktree DOES have it — remove it there to model the real case: build output
   // and generated config are gitignored, so a fresh tree never has them.
-  run(['abort', '--no-harvest', 'restarting with a worktree'])
+  run(['abort', '--outcome', 'abandoned', '--no-harvest', 'restarting with a worktree'])
   const created = cli(['new-run', 'W-9', '--worktree'], { home, cwd: repo.dir })
   assert.equal(created.verdict, 'CREATED')
   fs.rmSync(path.join(created.worktree, 'built.marker'))

@@ -79,6 +79,7 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
   const worktree = wtEvent?.event === 'worktree_created' ? wtEvent.path : null
 
   const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked, worktree, startSha: created?.start_sha || null })
+  if (worktree && wtEvent.env_number != null) state.env_number = wtEvent.env_number
   state.gates = gates
 
   if (lastComplete) {

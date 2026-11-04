@@ -49,7 +49,13 @@ marker — the half above states the conclusion, the half below proves it.
   stages use, never renumber.
 - `## Questions for you` — only when something needs an answer before
   planning; one bullet per question with your proposed default. Delete the
-  section otherwise.
+  section otherwise. A scope choice names each option's size (files and parts
+  of the system touched; one call site or the whole flow). A code term or an
+  uncommon abbreviation gets its meaning in brackets the first time it
+  appears (the gate checks).
+- Write the developer's half, and every question, in the developer's
+  language (the handoff's `developer_language`); keep code, paths and the
+  section headings as they are.
 
 ## Procedure
 - Restate requirements in your own words; note what the task does NOT say.

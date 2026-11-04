@@ -42,6 +42,12 @@ export function runMetrics(runDir, runId, config = null) {
     // A reopen re-enters an earlier stage (rework). Count the extra entry so a
     // stage that had to be redone is visible, and reset its first_pass judgment
     // so the redo has to earn green again.
+    // A run that ends without advancing (aborted) still spent time in the
+    // stage it ended in; that interval was dropped.
+    else if (e.event === 'run_aborted') {
+      if (currentStage && stages[currentStage] && enteredAt != null) stages[currentStage].ms += Math.max(0, at(e) - enteredAt)
+      currentStage = null
+    }
     else if (e.event === 'reopened') {
       if (e.from && stages[e.from] && enteredAt != null) stages[e.from].ms += Math.max(0, at(e) - enteredAt)
       currentStage = e.to
@@ -110,6 +116,14 @@ export function runMetrics(runDir, runId, config = null) {
     // after seeing it — an edited artifact at a gate, an explicit change
     // request, or a backward reopen. Deliberate touchpoints (answering the
     // context interview, approving a clean gate) are decisions, not rounds.
+    // How the run ended: completed (reached DONE through SCRIBE), the outcome
+    // recorded at abort, 'aborted' for aborts recorded before outcomes, or
+    // null while still open.
+    outcome: (() => {
+      const ab = events.find(e => e.event === 'run_aborted')
+      if (ab) return ab.outcome || 'aborted'
+      return events.some(e => e.event === 'advanced' && e.to === 'DONE') ? 'completed' : null
+    })(),
     human_rounds: gateEdits + changeRequests + reopens,
     change_requests: changeRequests,
     // rounds_to_merge = the delivery itself, plus every external round it took.
@@ -209,6 +223,7 @@ export function aggregate(runsMetrics) {
     // unmeasured run is not a run that took one round.
     median_rounds_to_merge: median(measuredRounds),
     runs_with_round_ledger: measuredRounds.length,
+    outcomes: tally(runsMetrics.map(m => m.outcome || 'open')),
     total_findings_after_pr: sum(runsMetrics.map(m => m.findings_after_pr || 0)),
     findings_missed_by: missedBy,
     // Did the loop close? Every run that is not captured is a run whose lessons

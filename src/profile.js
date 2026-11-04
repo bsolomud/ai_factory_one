@@ -286,7 +286,11 @@ const shellQuote = f => `'${f.replace(/'/g, `'\\''`)}'`
 
 // {placeholder} substitution. Returns null (→ skip the command) when a
 // placeholder resolves to nothing — never run a command with a hole in it.
-export function substitute(cmd, { files, tests }) {
+// {env_number}: the run's own environment number (a worktree run's private
+// test database and the like), '' outside a worktree run — the repo's default
+// environment. It is a value, not a file list, so it never skips a command.
+export function substitute(cmd, { files = [], tests = [], envNumber = null } = {}) {
+  cmd = cmd.replace(/\{env_number\}/g, envNumber == null ? '' : String(envNumber))
   const values = {
     changed_files:  files,
     changed_haml:   files.filter(f => f.endsWith('.haml')),

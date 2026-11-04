@@ -17,6 +17,13 @@ import { readEvents, SKIP_KINDS } from './state.js'
 
 const artifactAbs = (ctx, rel) => path.join(ctx.runDir, rel)
 
+// Every profile command a gate runs sees the run's environment number, so a
+// repo can key its per-run test database on PIPELINE_ENV_NUMBER without a
+// placeholder.
+const commandEnv = ctx => ctx.state?.env_number != null
+  ? { ...process.env, PIPELINE_ENV_NUMBER: String(ctx.state.env_number) }
+  : process.env
+
 // One advance runs several validators that all ask git for the same file
 // lists — memoized on the shared ctx so a subtask gate spawns each git
 // subprocess once, not once per validator.
@@ -142,10 +149,10 @@ export const validators = {
       // fall back to the full set there, preserving the previous behavior.
       const scopedTests = entry.when ? tests.filter(f => matchesAny(f, [entry.when])) : tests
       const testsForCmd = scopedTests.length ? scopedTests : tests
-      const resolved = substitute(entry.run, { files: scoped, tests: testsForCmd })
+      const resolved = substitute(entry.run, { files: scoped, tests: testsForCmd, envNumber: ctx.state?.env_number })
       if (resolved.skip) { skipped.push(`'${entry.run}' skipped: ${resolved.skip}`); continue }
       try {
-        execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000 })
+        execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000, env: commandEnv(ctx) })
         ran++
       } catch (e) {
         const tail = lastLines(`${e.stdout ?? ''}\n${e.stderr ?? ''}`, 50)
@@ -164,10 +171,10 @@ export const validators = {
         const fallback = resolveSlot(ctx.profile, 'test_fallback')
         if (fallback.length) {
           for (const entry of fallback) {
-            const resolved = substitute(entry.run, { files, tests })
+            const resolved = substitute(entry.run, { files, tests, envNumber: ctx.state?.env_number })
             if (resolved.skip) continue
             try {
-              execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000 })
+              execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000, env: commandEnv(ctx) })
               ran++
             } catch (e) {
               const tail = lastLines(`${e.stdout ?? ''}\n${e.stderr ?? ''}`, 50)
@@ -945,6 +952,17 @@ export const validators = {
         }
       }
     })
+    // Code terms and uncommon abbreviations: five pilot asks were misread or
+    // rejected for wording, among them identifiers and protocol acronyms the
+    // developer had never seen. Each such term is explained in brackets at
+    // least once in the developer's half: `name` (what it is).
+    // Only artifacts split for the developer: a PR draft is read by reviewers
+    // who read code, and its code terms are its subject.
+    const split = /^#\s+Pipeline details\s*$/m.test(artifact.body)
+    const unexplained = split ? codeTerms(human).filter(t => !t.glossed) : []
+    if (unexplained.length) {
+      reasons.push(`the part of ${rel} above '# Pipeline details' uses ${unexplained.length} code term(s) or abbreviation(s) with no plain explanation: ${unexplained.slice(0, 8).map(t => `'${t.term}'`).join(', ')}. Say it in product words, or explain it in brackets the first time — "the return address (where the tool sends the student back)"; code and paths belong below the marker`)
+    }
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
@@ -957,6 +975,31 @@ export const validators = {
     }
     return reasons.length ? { ok: false, reasons } : ok()
   }
+}
+
+// Identifier-shaped words in prose, outside code fences: snake_case, camelCase
+// starting lowercase, A::B, and dotted calls (Rails.logger). Product names
+// (PascalCase), domains and file names are left alone; all-caps words are
+// too often plain emphasis to judge. glossed: some occurrence is followed by
+// a bracketed explanation.
+function codeTerms(text) {
+  const terms = new Map()
+  let inFence = false
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) { inFence = !inFence; continue }
+    if (inFence || /^\s*<!--/.test(line)) continue
+    const re = /(?<![\w.:/@-])`?([A-Za-z][\w]*(?:(?:::|\.)[A-Za-z_][\w]*)+|[a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9]|[a-z]{2,}[A-Z][A-Za-z0-9]*)`?(\s*\()?/g
+    for (const m of line.matchAll(re)) {
+      const term = m[1]
+      if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,3}$/.test(term) && !/_/.test(term)) continue // a domain or file name
+      if (/\.(md|rb|js|ts|tsx|py|yml|yaml|json|html|css|csv|txt|sh|sql|xml|haml|erb)$/i.test(term)) continue // a file: human_part's business
+      if (/^(e\.g|i\.e|etc|vs)$/i.test(term)) continue
+      const t = terms.get(term) || { term, glossed: false }
+      if (m[2]) t.glossed = true
+      terms.set(term, t)
+    }
+  }
+  return [...terms.values()]
 }
 
 // Run a stage's validator list, collecting ALL failures (not fail-fast — the

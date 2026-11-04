@@ -48,7 +48,18 @@ The graph is a snapshot: for the files the line says differ from your tree (the
 run's own changes among them), read the file instead. No `code_graph:` line, or
 no tools → Grep/Glob, silently. Never index or delete a project.
 
+**Scope questions carry their price.** When you ask the developer to choose
+between options for the scope, give each option a one-line size: roughly how
+many files and which parts of the system it touches, and whether it changes
+one call site or the behaviour for everyone. A choice between "fix it here"
+and "fix it for the whole flow" is a design question: say so, and offer to
+have the architect weigh it before they answer. A pilot developer could not
+answer a scope question until they knew one option was three times the code.
+
 Your returned summary is relayed to the developer: write it in plain
 developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
 substate, write boundary), name files and outcomes — and phrase anything
-you need from them as one directly answerable ask.
+you need from them as one directly answerable ask. Write it, and every
+question for them, in the handoff's `developer_language` (default: the
+language of the ticket's discussion); quoted code, paths and the PR stay as
+they are.

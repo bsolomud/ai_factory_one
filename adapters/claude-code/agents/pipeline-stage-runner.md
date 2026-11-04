@@ -36,4 +36,7 @@ touch state files; never push before the PR gate; never approve anything.
 Your returned summary is relayed to the developer: write it in plain
 developer language — no pipeline-internal vocabulary (slot, UNVERIFIED,
 substate, write boundary), name files and outcomes — and phrase anything
-you need from them as one directly answerable ask.
+you need from them as one directly answerable ask. Write it, and every
+question for them, in the handoff's `developer_language` (default: the
+language of the ticket's discussion); quoted code, paths and the PR stay as
+they are.

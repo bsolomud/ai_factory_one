@@ -73,7 +73,7 @@ test('feedback + abort + show, and metrics reflect them', () => {
   assert.equal(m.gate_edits, 1)
   assert.equal(m.gate_edit_rate, 1)
 
-  assert.equal(run(['abort']).verdict, 'ABORTED')
+  assert.equal(run(['abort', '--outcome', 'abandoned']).verdict, 'ABORTED')
   assert.equal(run(['status']).verdict, 'NO_ACTIVE_RUN', 'aborted run drops out of active')
 })
 

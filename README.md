@@ -54,6 +54,16 @@ Three more gates came out of the first `/pipeline-retro`:
   doctor` lists closed runs whose open PR moved with no feedback round. The
   guard advises (never blocks) on a commit to such a branch. `pr_body_current`
   blocks CI until a PR whose code changed in a feedback round is re-published.
+- **Runs end with an outcome.** `pipeline abort --outcome <abandoned|superseded|duplicate|resolved-without-code|merged-outside-run|blocked-external>`
+  (with `--by <run>` for superseded); metrics count outcomes, and a run idle for
+  a week stops claiming sessions. `new-run` names other open runs for the same
+  ticket.
+- **Each worktree run has its own environment number** (1..15): `{env_number}`
+  in profile commands and `PIPELINE_ENV_NUMBER` in their environment, for a
+  per-run test database. `worktree add` says the new tree needs its setup again.
+- **Asks the developer can answer.** Stage agents write questions and summaries
+  in the developer's language; scope options state their size; a code term in
+  an artifact's developer half is explained in brackets once (`plain_language`).
 - **`keyed_file_collision`** (PR and CI). Files whose names carry an ordered key,
   declared in the profile as `keyed_files`, may not reuse a key on the base tip,
   fetched fresh.

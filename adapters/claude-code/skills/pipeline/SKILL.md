@@ -84,6 +84,15 @@ pipeline's internals. Rules:
   or skip-kind names. Say files, commands, and outcomes instead.
 - One plain ask per **Need you on this** item, ≤2 lines, answerable in a
   word ("yes", "A or B", a value).
+- **In the developer's language.** Talk to them in the language they write
+  to you in, and pass it to every stage agent as `developer_language` in the
+  handoff, so the questions and summaries they write arrive in it too. Code,
+  paths, commands and the PR text stay as they are. Five pilot asks were
+  rejected or misread for wording alone: jargon, a mechanism instead of a
+  choice, the wrong language.
+- A choice between options states what each one costs (how much code, which
+  parts of the system), and any term the developer may not know is explained
+  in brackets the first time.
 - Keep the whole report ≤15 lines unless the developer asks for more.
 - Pipeline mechanics (command hygiene, reopen semantics, re-baselining,
   autonomy plumbing) are YOUR concerns: give the developer the one-line
@@ -104,6 +113,11 @@ Self-contained run context (you have NO other conversation context):
 - run: <run id> · run_dir: <run_dir>  (artifacts in <run_dir>/artifacts/)
 - pr: <pr from status: #number url, opened at head; omit the line when null>
 - code_graph: <code_graph from status, verbatim; omit the line when null>
+- env_number: <env_number from status — this run's own environment (test
+  database and the like); the gates export it as PIPELINE_ENV_NUMBER to the
+  repo's commands; omit the line when null>
+- developer_language: <the language the developer writes to you in, e.g.
+  Ukrainian — every question and summary that reaches them is in it>
 - knowledge: <knowledge_dir from status>  (the repo's learned-facts store —
   read its index.md when the runbook routes you there; SCRIBE writes to it)
 - USAGE LEDGER: each knowledge fact, repo-bound skill, or curated doc you
@@ -462,12 +476,21 @@ trivial", never bundled with another command. Every approval is audited.
 
 ## A run ends without reaching SCRIBE → harvest it, always
 
-`pipeline abort` returns `harvest: required` and the runbook path. Act on it in
+`pipeline abort --outcome <abandoned|superseded|duplicate|resolved-without-code|merged-outside-run|blocked-external> [--reason "<one line>"]`
+— ask the developer how it ended if you do not know; `superseded` also takes
+`--by <the run that replaces it>`. A ticket that shipped outside the run is
+`merged-outside-run`, not a failure, and metrics count it that way. When
+`new-run` reports `open_runs_same_ticket`, ask whether the new run replaces
+them and abort them as `superseded`. Runs idle for a week are treated as
+parked: the guard stops attributing a session's work to them unless the
+session works in their worktree.
+
+It returns `harvest: required` and the runbook path. Act on it in
 the same breath: spawn the harvest agent (as in `/pipeline harvest` below) for
 that run before moving on. This is not bookkeeping — 18 of 29 pilot runs were
 aborted, mostly while parked waiting for a merge, and every one of them dropped
 a run's worth of learnings that were sitting in its own audit log. The developer
-can decline (`pipeline abort --no-harvest "<their reason>"`), and then it is
+can decline (`pipeline abort --outcome … --no-harvest "<their reason>"`), and then it is
 their recorded decision rather than a silent loss.
 
 ## `/pipeline status` · `/pipeline repos` · `/pipeline show` · `/pipeline metrics` · `/pipeline probes` · `/pipeline assets`

@@ -103,7 +103,7 @@ function decide(mode, input) {
     // dir (and may spawn git). The common case, a normal non-pipeline session
     // in an onboarded repo, must stay near-free on every guarded tool call.
     if (!sessionEngaged(input.session_id)) return allow()
-    const active = activeRuns(slug)
+    const active = activeRuns(slug, cwd)
     if (!active.length) return allow() // no run in flight — normal Claude usage
     const run = resolveRun(active, repoDir)
     // Bash needs THE run (its stage keys commit/push rules) — ambiguous → open.
@@ -333,15 +333,28 @@ function observeUsage(input, run) {
   return allow()
 }
 
-function activeRuns(slug) {
+// A run untouched for a week is parked, not active: two pilot runs left open
+// after being superseded kept collecting the next sessions' events and
+// enforcement. A parked run still counts when the session works inside its
+// own worktree — that is resuming it.
+const PARKED_MS = 7 * 24 * 3600 * 1000
+
+function activeRuns(slug, cwd = null) {
   const runsDir = path.join(paths.repoHome(slug), 'runs')
   if (!fs.existsSync(runsDir)) return []
   const active = []
+  const here = cwd ? paths.realpathish(cwd) : null
   for (const id of fs.readdirSync(runsDir)) {
     const runDir = path.join(runsDir, id)
     try {
       const state = readState(runDir)
-      if (state.stage !== 'DONE') active.push({ state, runDir })
+      if (state.stage === 'DONE') continue
+      let last = 0
+      try { last = fs.statSync(path.join(runDir, 'events.jsonl')).mtimeMs } catch { last = Date.now() }
+      const wt = state.git?.worktree && paths.realpathish(state.git.worktree)
+      const inside = here && wt && (here === wt || here.startsWith(wt + path.sep))
+      if (Date.now() - last > PARKED_MS && !inside) continue
+      active.push({ state, runDir })
     } catch { /* corrupt state → reconcile's job, not the guard's */ }
   }
   return active

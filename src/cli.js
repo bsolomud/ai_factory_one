@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { hashAtRef, hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
-import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, validateProfile, untrackedFiles } from './profile.js'
+import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, substitute, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { boundaryAmendments, parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -27,6 +27,9 @@ import { collect as retroCollect, finish as retroFinish, openPrRework, proposals
 // checks (lint/tests/boundary) still gate; express only drops the redundant
 // human sign-off on those quality gates.
 const AUTONOMY_MODES = ['gated', 'express']
+
+// How a run that never reached SCRIBE ended.
+const ABORT_OUTCOMES = ['abandoned', 'superseded', 'duplicate', 'resolved-without-code', 'merged-outside-run', 'blocked-external']
 
 export function main(argv) {
   const { command, positional, flags } = parseArgs(argv)
@@ -195,6 +198,7 @@ const commands = {
       run_dir: runDir,
       knowledge_dir: paths.knowledgeDir(ctx.slug),
       worktree: state.git?.worktree || null,
+      env_number: state.env_number ?? null,
       pr: readEvents(runDir).filter(e => e.event === 'pr_opened').map(({ number, url, head, branch }) => ({ number, url, head, branch })).at(-1) ?? null,
       code_graph: codeGraph(repoDir)?.line ?? null,
       ...(staleNote && { stale_note: staleNote }),
@@ -230,6 +234,9 @@ const commands = {
     if (fs.existsSync(runDir)) {
       return emit({ verdict: 'ERROR', error: `run ${runId} already exists — resume it via 'pipeline status --run ${runId}'` }, 1)
     }
+    // Another open run for the same ticket is usually the one this replaces.
+    const ticket = runId.match(/^[A-Za-z][A-Za-z0-9]*-\d+/)?.[0]
+    const sameTicket = ticket ? listRuns(ctx.slug).filter(r => r.stage !== 'DONE' && r.id !== runId && r.id.startsWith(ticket)).map(r => r.id) : []
     // --base declares a run STACKED on an open feature branch, so "this change" is
     // the diff from that branch and not from the trunk (see 'set-base' for why the
     // wrong base poisons every validator). An explicit flag always wins; otherwise
@@ -290,15 +297,16 @@ const commands = {
     const startSha = headSha(worktree || ctx.repoDir)
     const state = newState({ runId, repo: ctx.slug, stage: config.first, base, baselineUntracked, worktree, startSha })
     if (flags.autonomy) state.autonomy = flags.autonomy
+    if (worktree) state.env_number = allocateEnvNumber(ctx.slug, ctx.profile, runId)
     writeState(runDir, state)
     // The full file list (not just a count) so a rebuilt state.json restores the
     // ambient baseline — otherwise a crash would re-flag the developer's scratch.
     appendEvent(runDir, { event: 'run_created', run: runId, base, start_sha: startSha, baseline_untracked: baselineUntracked })
     if (baseCandidate) appendEvent(runDir, { event: 'base_candidate', base, candidate: baseCandidate, question: baseQuestion })
-    if (worktree) appendEvent(runDir, { event: 'worktree_created', path: worktree, base })
+    if (worktree) appendEvent(runDir, { event: 'worktree_created', path: worktree, base, env_number: state.env_number })
     // worktree_setup is surfaced, never executed: deps install can be slow,
     // credentialed, or interactive — the dispatcher/developer runs it.
-    const setup = worktree ? resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run) : []
+    const setup = worktree ? setupCommands(ctx.profile, state.env_number) : []
     const env = startEnv(ctx, worktree, runId)
     if (env.env) appendEvent(runDir, { event: 'env_checked', verdict: env.env, gaps: env.env_gaps ?? [] })
     return emit({
@@ -309,9 +317,10 @@ const commands = {
       run_dir: runDir,
       base,
       ...(baseCandidate && { base_candidate: baseCandidate, base_question: baseQuestion }),
-      ...(worktree && { worktree }),
+      ...(worktree && { worktree, env_number: state.env_number }),
       code_graph: codeGraph(worktree || ctx.repoDir)?.line ?? null,
       ...(setup.length && { worktree_setup: setup, note: 'run the worktree_setup command(s) in the worktree (and copy untracked config like .env) before starting stage work' }),
+      ...(sameTicket.length && { open_runs_same_ticket: sameTicket, ask: `run(s) ${sameTicket.join(', ')} for the same ticket are still open. ASK THE DEVELOPER whether this run replaces them; if so: 'pipeline abort --run <old> --outcome superseded --by ${runId}' — an open stale run keeps collecting this work's events.` }),
       ...env
     })
   },
@@ -910,12 +919,26 @@ const commands = {
   // but it now DEMANDS the harvest rather than forgetting it: the verdict names
   // the runbook, the event records that a harvest is owed, and skipping is an
   // explicit, reasoned choice instead of the default.
+  // Why a run ended without SCRIBE, on the record. Two strikes: a run whose
+  // ticket shipped outside it, and one superseded by a fresh run, both read as
+  // plain "aborted" — metrics scored shipped work as failure, and the open
+  // superseded run kept soaking up the next session's events.
   abort(_, flags) {
-    const { runDir, state } = loadRun(flags)
+    const { ctx, runDir, state } = loadRun(flags)
     if (state.stage === 'DONE') return emit({ verdict: 'OK', note: 'run already finished' })
+    const outcome = typeof flags.outcome === 'string' ? flags.outcome : null
+    if (!ABORT_OUTCOMES.includes(outcome)) {
+      return emit({ verdict: 'ERROR', error: `say how the run ended: pipeline abort --outcome <${ABORT_OUTCOMES.join('|')}> [--reason "<one line>"] [--by <run id> for superseded]` }, 1)
+    }
+    const by = typeof flags.by === 'string' ? flags.by : null
+    if (outcome === 'superseded' && !by) return emit({ verdict: 'ERROR', error: `--outcome superseded needs --by <the run that replaces it>` }, 1)
+    if (by && !fs.existsSync(paths.runDir(ctx.slug, by))) return emit({ verdict: 'ERROR', error: `--by ${by}: no such run` }, 1)
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : ''
     const from = state.stage
-    appendEvent(runDir, { event: 'run_aborted', from })
+    appendEvent(runDir, { event: 'run_aborted', from, outcome, ...(reason && { reason }), ...(by && { superseded_by: by }) })
     state.aborted = true
+    state.outcome = outcome
+    if (by) state.superseded_by = by
     state.stage = 'DONE'
     state.stage_status = 'complete'
     writeState(runDir, state)
@@ -928,6 +951,7 @@ const commands = {
       verdict: 'ABORTED',
       run: state.run_id,
       aborted_at: from,
+      outcome,
       harvest: skipped ? 'skipped' : 'required',
       ...(skipped ? {} : { harvest_runbook: paths.harvestRunbook() }),
       note: `run marked aborted at ${runDir}. Its git branch (if any) was left untouched — remove it manually if unwanted.`
@@ -1138,17 +1162,23 @@ const commands = {
       const files = untrackedFiles(wtPath)
       state.git.worktree = wtPath
       state.git.baseline_untracked = files
+      if (state.env_number == null) state.env_number = allocateEnvNumber(ctx.slug, ctx.profile, state.run_id)
       writeState(runDir, state)
-      appendEvent(runDir, { event: 'worktree_created', path: wtPath, base: state.git.base })
+      appendEvent(runDir, { event: 'worktree_created', path: wtPath, base: state.git.base, env_number: state.env_number })
       appendEvent(runDir, { event: 'baseline_untracked', count: files.length, files })
-      const setup = resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run)
+      const setup = setupCommands(ctx.profile, state.env_number)
+      // A re-created tree has none of the old one's setup: dependencies, built
+      // assets, the run's own database. A pilot run resumed in one as if it
+      // had, and its first stage failed for that reason alone.
       return emit({
         verdict: 'OK',
         run: state.run_id,
         worktree: wtPath,
+        env_number: state.env_number,
         checked_out: state.git.branch || `detached at ${state.git.base}`,
+        setup_required: true,
         ...(setup.length && { worktree_setup: setup }),
-        note: 'run the worktree_setup command(s) (and copy untracked config like .env) before working there'
+        note: `this tree is new: run the worktree_setup command(s) in it (and copy untracked config like .env), then 'pipeline doctor --env --run ${state.run_id}' — before any stage work`
       })
     }
 
@@ -1161,8 +1191,14 @@ const commands = {
     removeWorktree(mainDir, wtPath, { force: !!flags.force })
     if (flags['delete-branch'] && state.git.branch) deleteBranch(mainDir, state.git.branch)
     state.git.worktree = null
+    state.env_number = null // back in the main checkout: the repo's default environment
+    // The run now works in the main checkout, whose ambient untracked files are
+    // not the run's; without a fresh snapshot the boundary check flagged them.
+    const files = state.stage === 'DONE' ? state.git.baseline_untracked : untrackedFiles(mainDir)
+    state.git.baseline_untracked = files
     writeState(runDir, state)
     appendEvent(runDir, { event: 'worktree_removed', path: wtPath })
+    if (state.stage !== 'DONE') appendEvent(runDir, { event: 'baseline_untracked', count: files.length, files })
     return emit({
       verdict: 'OK',
       run: state.run_id,
@@ -1542,16 +1578,17 @@ function listRuns(slug) {
 function envReport(ctx, flags) {
   let workdir = ctx.repoDir
   let runId = null
+  let envNumber = null
   try {
     runId = flags.run || runForWorktree(ctx.slug, ctx.repoDir) || onlyActiveRun(ctx.slug)
     if (runId) {
       const st = readState(paths.runDir(ctx.slug, runId))
-      if (st.git?.worktree && fs.existsSync(st.git.worktree)) workdir = st.git.worktree
+      if (st.git?.worktree && fs.existsSync(st.git.worktree)) { workdir = st.git.worktree; envNumber = st.env_number ?? null }
     }
   } catch { /* no run, or unreadable state — then we check the checkout we are in */ }
 
   const entries = resolveSlot(ctx.profile, 'env_checks')
-  const setup = resolveSlot(ctx.profile, 'worktree_setup').map(e => e.run)
+  const setup = setupCommands(ctx.profile, envNumber)
   const freshTree = paths.isLinkedWorktree(workdir)
   if (entries.length === 0) {
     return emit({
@@ -1562,7 +1599,7 @@ function envReport(ctx, flags) {
       next_action: `this repo has no 'commands.env_checks' — add them via '/pipeline onboard'. Each is a cheap command that proves the tree can actually run the repo (assets built, generated config present, database loaded), with an optional 'fix:' naming the command that repairs it. Without them, an unprepared tree first announces itself as a failing test deep inside a stage.`
     })
   }
-  const results = runEnvChecks(entries, workdir)
+  const results = runEnvChecks(entries, workdir, 300_000, envNumber)
   const failed = results.filter(r => r.status === 'fail')
   return emit({
     verdict: failed.length ? 'ENV_GAPS' : 'OK',
@@ -1578,12 +1615,13 @@ function envReport(ctx, flags) {
   }, failed.length ? 1 : 0)
 }
 
-function runEnvChecks(entries, workdir, timeout = 300_000) {
+function runEnvChecks(entries, workdir, timeout = 300_000, envNumber = null) {
   const results = []
+  const env = envNumber != null ? { ...process.env, PIPELINE_ENV_NUMBER: String(envNumber) } : process.env
   for (const entry of entries) {
     const name = entry.name || commandPrefix(entry.run) || entry.run
     try {
-      execSync(entry.run, { cwd: workdir, stdio: 'pipe', timeout })
+      execSync(withEnvNumber(entry.run, envNumber), { cwd: workdir, stdio: 'pipe', timeout, env })
       results.push({ check: name, status: 'pass' })
     } catch (e) {
       const out = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.trim().split('\n').slice(-8).join('\n')
@@ -1592,6 +1630,27 @@ function runEnvChecks(entries, workdir, timeout = 300_000) {
   }
   return results
 }
+
+const withEnvNumber = (cmd, n) => substitute(cmd, { files: ['-'], tests: ['-'], envNumber: n }).cmd ?? cmd
+
+// A worktree run's own environment number, 1..worktree_env_max (default 15):
+// the smallest one no other open run holds. A pilot run's re-created worktree
+// shared the default test database with the main checkout, and parallel runs
+// overwrote each other's data; a number per run is what a repo keys its
+// per-run database (and the like) on — {env_number} in its commands, or
+// PIPELINE_ENV_NUMBER in their environment.
+function allocateEnvNumber(slug, profile, runId) {
+  const max = Number(profile?.worktree_env_max) || 15
+  const used = new Set()
+  for (const r of listRuns(slug)) {
+    if (r.id === runId || r.stage === 'DONE') continue
+    try { const n = readState(paths.runDir(slug, r.id)).env_number; if (n != null) used.add(n) } catch { /* skip */ }
+  }
+  for (let n = 1; n <= max; n++) if (!used.has(n)) return n
+  return null
+}
+
+const setupCommands = (profile, envNumber) => resolveSlot(profile, 'worktree_setup').map(e => withEnvNumber(e.run, envNumber))
 
 // The environment, judged once before the first stage. A pilot run needed a
 // profile re-sync and a dependency install before CONTEXT: package.json had moved

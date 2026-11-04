@@ -26,9 +26,8 @@ test('full fake run: CONTEXT → … → DONE with blocking, gating, crash recov
 
   // --- CONTEXT: template alone must NOT pass
   let blocked = advance()
-  assert.equal(blocked.verdict, 'BLOCKED')
-  assert.equal(blocked.code, 1, 'BLOCKED exits non-zero')
-  assert.match(blocked.reasons.join(' '), /status 'draft'/)
+  assert.equal(blocked.verdict, 'NOT_STARTED', 'an untouched template is a stage nobody worked on, not a failed one')
+  assert.equal(blocked.code, 1, 'NOT_STARTED exits non-zero')
 
   completeArtifact(runDir, 'artifacts/01-context.md', 'T-1', 'CONTEXT',
     contextSections({ Requirements: 'Change app greeting.', Decisions: 'Scope: greeting only.', Findings: 'src/app.sh prints it.', 'Open questions': '' }))

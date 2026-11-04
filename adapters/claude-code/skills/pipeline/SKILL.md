@@ -118,6 +118,10 @@ Self-contained run context (you have NO other conversation context):
   repo's commands; omit the line when null>
 - developer_language: <the language the developer writes to you in, e.g.
   Ukrainian — every question and summary that reaches them is in it>
+- knowledge: <knowledge_dir from status>/index.md — what this repo's past runs
+  learned; read it before the code, open only the facts it routes to for this
+  change, and record each one you use ('pipeline used knowledge <name>').
+  Omit the line when the directory has no index.md.
 - knowledge: <knowledge_dir from status>  (the repo's learned-facts store —
   read its index.md when the runbook routes you there; SCRIBE writes to it)
 - USAGE LEDGER: each knowledge fact, repo-bound skill, or curated doc you
@@ -260,6 +264,8 @@ required — never assume Fast fix. Mode is shown in `status` as `autonomy`.
 3. Relay the executor's summary in the report format above. GATE → approve
    protocol; ADVANCED/DONE → say what `/pipeline work` does next; BLOCKED after
    the agent's 3 rounds → show its blockers. STOP.
+   NOT_STARTED → the stage's agent never ran (its artifact is still the
+   template): dispatch it; never advance an empty stage.
    - A BLOCKED verdict from a stage agent that never ran `pipeline check` is a
      process failure, not bad luck: the runbooks require the dry run before
      `advance`, precisely so the agent finds its own defects for free. Say so in
@@ -288,6 +294,14 @@ so TEST/REVIEW/PR genuinely re-run (not skipped on a stale `complete` stamp).
 Then make the change in IMPLEMENT, and `/pipeline work` re-advances forward
 through the gates as normal. Backward only — forward is always `advance`.
 Tell the developer you're reopening and why before you do it.
+
+**Batch late fixes into ONE reopen.** Each reopen re-runs every later stage, so
+collect what is pending first — advisory findings from REVIEW, SCRIBE or a late
+probe, a doc fix — ask the developer once which to take, then reopen once to
+the deepest stage the batch needs; a doc-only fix rides along with the code
+fix. A pilot run paid three full cycles for three late one-liners. On the way
+forward, try `pipeline recertify` at each stage before dispatching its agent:
+a stage whose code and artifact did not change is restored without one.
 
 ## `/pipeline pr-feedback [<PR link or number>]` — work reviewer comments
 

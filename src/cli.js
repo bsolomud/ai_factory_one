@@ -1,10 +1,11 @@
 import { execFileSync, execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { hashAtRef, hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
-import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, substitute, validateProfile, untrackedFiles } from './profile.js'
+import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, substitute, treeDigest, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { boundaryAmendments, parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -34,6 +35,10 @@ const ABORT_OUTCOMES = ['abandoned', 'superseded', 'duplicate', 'resolved-withou
 export function main(argv) {
   const { command, positional, flags } = parseArgs(argv)
   try {
+    // `--help` must never run the command: `advance --help` once advanced a run.
+    if (!command || command === 'help' || flags.help || flags.h || positional.includes('-h')) {
+      return emit({ verdict: 'HELP', commands: Object.keys(commands), note: `nothing was run. Usage: pipeline <command> [args] --repo <slug> --run <id>; the README lists what each command does` })
+    }
     const handler = commands[command]
     if (!handler) return emit({ verdict: 'ERROR', error: `unknown command '${command}' — one of: ${Object.keys(commands).join(', ')}` }, 1)
     return handler(positional, flags)
@@ -407,6 +412,13 @@ const commands = {
         appendEvent(runDir, { event: 'branch_recorded', branch })
       }
     }
+    // The stage's agent has not run yet: its artifact is still the template.
+    // A second `advance` right after a gate approval landed here and produced
+    // a wall of "section is empty" reasons that read as a failed stage.
+    if (stageDef.output && artifactUntouched(runDir, config, stageName, state.run_id)) {
+      writeState(runDir, state) // keep what was learned above (the run's branch)
+      return emit({ verdict: 'NOT_STARTED', stage: stageName, note: `${stageName} has not been worked on yet — its artifact is still the template. Dispatch the stage's agent (/pipeline work); do not advance an empty stage.` }, 1)
+    }
     const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
     // Legacy runs stored unverified as plain strings; normalize to objects so
     // the stage-scoping below has one shape to handle. A legacy string only
@@ -436,13 +448,20 @@ const commands = {
       return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text) }, 1)
     }
     for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u.text, kind: u.kind })
+    recordProbeUse(ctx, runDir, stageName, stageDef.output)
     const gate = stageDef.gate || { required: false }
     if (!gate.required) {
       return emit(transition(runDir, config, state, { by: 'none' }))
     }
     state.stage_status = 'awaiting_gate'
     writeState(runDir, state)
-    appendEvent(runDir, { event: 'validated', stage: stageName, subtask: state.substate.subtask ?? undefined })
+    appendEvent(runDir, {
+      event: 'validated', stage: stageName, subtask: state.substate.subtask ?? undefined,
+      // What was certified: lets 'pipeline recertify' restore this stage after
+      // a reopen that changed nothing it judged.
+      tree: treeDigest(ctx.repoDir, state.git?.base || 'master', new Set(state.git?.baseline_untracked || [])),
+      artifact: stageDef.output ? artifactDigest(path.join(runDir, stageDef.output)) : null
+    })
     // Express (Fast fix): validators passed AND this gate isn't an irreversible
     // one (push/PR/CI) → auto-approve. Human gates (human_required) always stop.
     if (state.autonomy === 'express' && !gate.human_required) {
@@ -1210,16 +1229,25 @@ const commands = {
   'agent-start'(positional, flags) {
     const { ctx, runDir, state } = loadRun(flags)
     const label = positional[0] || flags.label || 'agent'
-    const ceiling = Number(flags.max ?? ctx.profile?.limits?.max_agents_per_run ?? 40)
-    const spawned = readEvents(runDir).filter(e => e.event === 'agent_spawned').length
+    // The ceiling guards against a runaway loop, not against legitimate
+    // rework: each PR-feedback round re-runs a stage chain, and a pilot run hit
+    // a flat ceiling on its third round. So every recorded 'pr' round adds
+    // limits.agents_per_pr_round (default 12).
+    const events = readEvents(runDir)
+    const prRounds = events.filter(e => e.event === 'round_opened' && e.source === 'pr').length
+    const base = Number(flags.max ?? ctx.profile?.limits?.max_agents_per_run ?? 40)
+    const perRound = Number(ctx.profile?.limits?.agents_per_pr_round ?? 12)
+    const ceiling = flags.max != null ? base : base + perRound * prRounds
+    const spawned = events.filter(e => e.event === 'agent_spawned').length
     if (spawned >= ceiling) {
       return emit({
         verdict: 'BLOCKED',
-        reasons: [`agent-spawn ceiling reached for this run (${spawned}/${ceiling}). This guards against a runaway loop. If the work legitimately needs more, raise limits.max_agents_per_run in the profile or pass --max, and tell the developer why.`]
+        reasons: [`agent-spawn ceiling reached for this run (${spawned}/${ceiling}, ${prRounds} PR round(s) included). This guards against a runaway loop. If the work legitimately needs more, raise limits.max_agents_per_run (or limits.agents_per_pr_round) in the profile or pass --max, and tell the developer why.`]
       }, 1)
     }
     appendEvent(runDir, { event: 'agent_spawned', stage: state.stage, label })
-    return emit({ verdict: 'OK', label, spawned: spawned + 1, ceiling })
+    const warn = spawned + 1 >= Math.ceil(ceiling * 0.8)
+    return emit({ verdict: 'OK', label, spawned: spawned + 1, ceiling, ...(warn && { warning: `${spawned + 1} of ${ceiling} agents used — tell the developer now, before the ceiling stops the run mid-stage` }) })
   },
 
   // Move a run BACKWARD to an earlier stage — the sanctioned way to make a late
@@ -1261,8 +1289,46 @@ const commands = {
       stage: target,
       stage_prompt: paths.asset(config.stages[target].prompt),
       artifacts_reset: reset,
-      next_action: `run reopened at ${target}; make the change, then '/pipeline work' re-advances through the gates (downstream artifacts were reset so TEST/REVIEW/PR re-run).`
+      next_action: `run reopened at ${target}; make the change, then '/pipeline work' re-advances through the gates (downstream artifacts were reset so TEST/REVIEW/PR re-run). At each later stage try 'pipeline recertify' first: if the change touched nothing that stage certified, it is restored without its agent.`
     })
+  },
+
+  // Clears one file of the secret scan for this run, on the record — for a
+  // fixture whose field names look like credentials. The line-level
+  // 'pipeline:allow-secret' comment stays for a single line.
+  'allow-secret'(positional, flags) {
+    const { runDir, state } = loadRun(flags)
+    const file = positional[0]
+    const reason = typeof flags.reason === 'string' ? flags.reason.trim() : ''
+    if (!file || !reason) return emit({ verdict: 'ERROR', error: `usage: pipeline allow-secret <repo-relative file> --reason "<why its credential-looking values are not secrets>"` }, 1)
+    state.secrets_allowed = [...(state.secrets_allowed || []).filter(a => a.file !== file), { file, reason }]
+    writeState(runDir, state)
+    appendEvent(runDir, { event: 'secret_allowed', file, reason })
+    return emit({ verdict: 'OK', allowed: file, note: 'the secret scan skips this file for the rest of the run; tell the developer, it is their call' })
+  },
+
+  // A reopen resets every later stage, even when the change made after it
+  // touched nothing they judged — a pilot run re-ran TEST, REVIEW and PR in
+  // full over a byte-identical tree. When the code and the stage's artifact
+  // are exactly what its last validation certified, restore it; the gate's
+  // validators still run on the next advance, and its approval is still owed.
+  recertify(_, flags) {
+    const { ctx, config, runDir, state } = loadRun(flags)
+    const stageName = state.stage
+    const def = config.stages[stageName]
+    if (!def?.output) return emit({ verdict: 'ERROR', error: `${stageName} has no artifact to recertify` }, 1)
+    const last = readEvents(runDir).filter(e => e.event === 'validated' && e.stage === stageName).at(-1)
+    if (!last?.tree || !last.artifact) {
+      return emit({ verdict: 'CHANGED', stage: stageName, note: `${stageName} was never certified with a digest — do the stage's work` })
+    }
+    const tree = treeDigest(ctx.repoDir, state.git?.base || 'master', new Set(state.git?.baseline_untracked || []))
+    const file = path.join(runDir, def.output)
+    if (tree !== last.tree) return emit({ verdict: 'CHANGED', stage: stageName, note: `the code changed since ${stageName} was certified — run the stage again` })
+    if (artifactDigest(file) !== last.artifact) return emit({ verdict: 'CHANGED', stage: stageName, note: `${def.output} was edited since it was certified — finish it and advance as usual` })
+    const raw = fs.readFileSync(file, 'utf8')
+    fs.writeFileSync(file, raw.replace(/(^---\n[\s\S]*?\bstatus:[ \t]*)\S+/m, '$1complete'))
+    appendEvent(runDir, { event: 'recertified', stage: stageName })
+    return emit({ verdict: 'RECERTIFIED', stage: stageName, next_action: `nothing ${stageName} judged has changed — 'pipeline advance' re-runs its checks and stops at its gate; no agent needed` })
   },
 
   'set-substate'(positional, flags) {
@@ -1357,8 +1423,14 @@ const commands = {
     if (!KINDS.includes(kind) || !ref) {
       return emit({ verdict: 'ERROR', error: `usage: pipeline used <${KINDS.join('|')}> <ref> — e.g. 'pipeline used knowledge oversized-payload-500' or 'pipeline used skill .claude/skills/code-review'` }, 1)
     }
-    appendEvent(runDir, { event: 'asset_used', kind, ref, stage: state.stage, source: 'agent', ...(typeof flags.note === 'string' && flags.note ? { note: flags.note } : {}) })
-    return emit({ verdict: 'OK', recorded: { kind, ref }, note: 'usage recorded — feeds the per-repo assets report (pipeline assets)' })
+    // One asset per record, in one spelling: refs written as './x', 'x.md' or
+    // 'a.md, b.md' split the report into aliases and multi-path noise.
+    const refs = ref.split(/\s*[,;]\s*|\s+(?=\S+\/)/).map(r => r.trim().replace(/^\.\//, '').replace(/\/$/, '')).filter(Boolean)
+      .map(r => kind === 'knowledge' ? path.basename(r).replace(/\.md$/, '') : r)
+    for (const r of new Set(refs)) {
+      appendEvent(runDir, { event: 'asset_used', kind, ref: r, stage: state.stage, source: 'agent', ...(typeof flags.note === 'string' && flags.note ? { note: flags.note } : {}) })
+    }
+    return emit({ verdict: 'OK', recorded: [...new Set(refs)].map(r => ({ kind, ref: r })), note: 'usage recorded — feeds the per-repo assets report (pipeline assets)' })
   },
 
   // Usage report for the repo's knowledge/skill assets: inventory (bound repo
@@ -1445,6 +1517,46 @@ const commands = {
 // Flip an artifact's frontmatter status back to draft (used by reopen). Returns
 // true if the file existed and was (re)set. Targeted regex on the frontmatter
 // value preserves the rest of the file's formatting.
+// A learned probe whose command a passing Coupling table re-ran WAS used, but
+// the asset ledger only saw what agents remembered to declare: four pilot
+// proposals found the knowledge store reading as dead weight while its probes
+// were in every plan. Recorded once per run, stage and fact.
+function recordProbeUse(ctx, runDir, stageName, output) {
+  try {
+    if (!output) return
+    const coupling = sections(parseArtifact(path.join(runDir, output))?.body ?? '')['Coupling']
+    if (!coupling) return
+    const norm = t => String(t).replace(/\\\|/g, '|').replace(/\s+/g, ' ').trim()
+    const text = norm(coupling)
+    const seen = new Set(readEvents(runDir).filter(e => e.event === 'asset_used' && e.kind === 'knowledge' && e.stage === stageName).map(e => e.ref))
+    for (const fact of readProbes(paths.knowledgeDir(ctx.slug))) {
+      if (seen.has(fact.fact)) continue
+      if (fact.probes.some(p => text.includes(norm(p.run)))) {
+        appendEvent(runDir, { event: 'asset_used', kind: 'knowledge', ref: fact.fact, stage: stageName, source: 'coupling' })
+        seen.add(fact.fact)
+      }
+    }
+  } catch { /* the ledger must never break an advance */ }
+}
+
+// The artifact's content with its status line normalized, so a reset to
+// draft does not count as an edit.
+function artifactDigest(file) {
+  try {
+    const raw = fs.readFileSync(file, 'utf8').replace(/(^---\n[\s\S]*?\bstatus:[ \t]*)\S+/m, '$1X')
+    return 'sha256:' + createHash('sha256').update(raw).digest('hex')
+  } catch { return null }
+}
+
+function artifactUntouched(runDir, config, stageName, runId) {
+  const def = config.stages[stageName]
+  const file = path.join(runDir, def.output)
+  const template = paths.asset('templates', path.basename(def.output).replace(/^\d+-/, ''))
+  if (!fs.existsSync(file) || !fs.existsSync(template)) return false
+  const scaffold = fs.readFileSync(template, 'utf8').replaceAll('__RUN__', runId).replaceAll('__STAGE__', stageName)
+  return fs.readFileSync(file, 'utf8') === scaffold
+}
+
 function resetArtifactStatus(file) {
   if (!fs.existsSync(file)) return false
   const raw = fs.readFileSync(file, 'utf8')

@@ -80,11 +80,15 @@ Learnings, Routing.
     `- [<topic>](<topic>.md) — <one-line hook>` (create the index if missing).
     CONTEXT and PLAN read the index first, so the hook line decides whether
     the fact is ever found again.
-  - **Pipeline-generic** → append it to `~/.ai_factory_one/framework-proposals.md`
-    (create if missing): a dated `## <date> · <run id> — <title>` heading plus
-    the proposal in a few lines. Never leave a framework proposal only as
-    prose in this retro — that file is where the pipeline's maintainer
-    harvests them.
+  - **Pipeline-generic** → `~/.ai_factory_one/framework-proposals.md`
+    (create if missing), one entry per defect. First `pipeline proposals
+    --all`: if an entry already names this defect, append one line under it —
+    `- Recurrence <date> · <run id>: <what happened this time>` — and do not
+    open a new heading; the line is a strike, and strikes decide what gets
+    fixed first. Otherwise append `## <next_id> · <date> · <run id> — <title>`
+    (`next_id` from the same command) plus the proposal in a few lines.
+    Never leave a framework proposal only as prose in this retro — that file
+    is where the pipeline's maintainer harvests them.
 
 ## Done when
 `pipeline probes --lint` reports no fact this run added without a runnable

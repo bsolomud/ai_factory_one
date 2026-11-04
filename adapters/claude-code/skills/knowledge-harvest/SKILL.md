@@ -94,8 +94,12 @@ and follow them; do not improvise a format.** Additionally:
 ## Step 4 — Framework proposals
 
 Pipeline-generic learnings (validator defects, runbook gaps, metric blind
-spots) go to `~/.ai_factory_one/framework-proposals.md` (create if missing)
-as dated entries: `## <date> · <run id> — <title>` plus a few lines. If a
+spots) go to `~/.ai_factory_one/framework-proposals.md` (create if missing),
+one entry per defect. Check `pipeline proposals --all` first: a defect that
+already has an entry gets one line under it,
+`- Recurrence <date> · <run id>: <one line>` (a strike), never a new
+heading. A new defect gets `## <next_id> · <date> · <run id> — <title>` plus
+a few lines (`next_id` from the same command). If a
 retro claims a proposal was filed/proposed/routed (any such wording) but the
 file lacks it — or the file doesn't exist at all — reconstruct the entry
 from the retro's own text and mark it `(reconstructed)`.

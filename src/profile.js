@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import YAML from 'yaml'
@@ -193,6 +194,21 @@ export function diffBase(repoDir, base) {
 
 function isAncestor(repoDir, a, b) {
   try { execFileSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: repoDir, stdio: 'ignore' }); return true } catch { return false }
+}
+
+// A digest of "this change" as it stands: the diff from the common ancestor
+// plus every untracked file the run created. Equal digests mean the code a
+// stage certified is the code that is there now.
+export function treeDigest(repoDir, base, ambient = new Set()) {
+  try {
+    const h = createHash('sha256')
+    h.update(execFileSync('git', ['diff', '--binary', '--no-ext-diff', diffBase(repoDir, base)], { cwd: repoDir, maxBuffer: 1 << 28 }))
+    for (const f of untrackedFiles(repoDir).filter(f => !ambient.has(f)).sort()) {
+      h.update(f)
+      try { h.update(fs.readFileSync(path.join(repoDir, f))) } catch { /* vanished */ }
+    }
+    return 'sha256:' + h.digest('hex')
+  } catch { return null }
 }
 
 export function changedFiles(repoDir, base, { includeUntracked = false } = {}) {

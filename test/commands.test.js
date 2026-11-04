@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { validateProfile } from '../src/profile.js'
@@ -267,7 +267,10 @@ test('advance BLOCKED: the event records what blocked, not just how much', () =>
   installProfile(home, 'example.com-test-bl-repo', STANDARD_PROFILE)
   const run = a => cli(a, { home, cwd: repo.dir })
   run(['new-run', 'BL-1'])
-  const blocked = run(['advance'])   // CONTEXT artifact is still a draft template
+  // A started but unfinished CONTEXT (an untouched template is NOT_STARTED instead).
+  const ctxFile = path.join(home, 'repos', 'example.com-test-bl-repo', 'runs', 'BL-1', 'artifacts', '01-context.md')
+  writeFileSync(ctxFile, readFileSync(ctxFile, 'utf8') + '\nwork in progress\n')
+  const blocked = run(['advance'])
   assert.equal(blocked.verdict, 'BLOCKED')
 
   const runDir = path.join(home, 'repos', 'example.com-test-bl-repo', 'runs', 'BL-1')

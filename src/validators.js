@@ -17,6 +17,12 @@ import { readEvents, SKIP_KINDS } from './state.js'
 
 const artifactAbs = (ctx, rel) => path.join(ctx.runDir, rel)
 
+// A profile command may carry its own `timeout:` in seconds (default 600). A
+// pilot gate reported a slow suite stopped at the limit as "command failed
+// (exit ?)", and the stage hunted for a defect that did not exist.
+const commandTimeout = entry => (Number(entry?.timeout) > 0 ? Number(entry.timeout) : 600) * 1000
+const timedOut = e => e?.signal === 'SIGTERM' || e?.code === 'ETIMEDOUT' || /ETIMEDOUT/.test(String(e?.message))
+
 // Every profile command a gate runs sees the run's environment number, so a
 // repo can key its per-run test database on PIPELINE_ENV_NUMBER without a
 // placeholder.
@@ -151,12 +157,15 @@ export const validators = {
       const testsForCmd = scopedTests.length ? scopedTests : tests
       const resolved = substitute(entry.run, { files: scoped, tests: testsForCmd, envNumber: ctx.state?.env_number })
       if (resolved.skip) { skipped.push(`'${entry.run}' skipped: ${resolved.skip}`); continue }
+      const timeout = commandTimeout(entry)
       try {
-        execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000, env: commandEnv(ctx) })
+        execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout, env: commandEnv(ctx) })
         ran++
       } catch (e) {
         const tail = lastLines(`${e.stdout ?? ''}\n${e.stderr ?? ''}`, 50)
-        reasons.push(`command failed (exit ${e.status ?? '?'}): ${resolved.cmd}\n${tail}\nFix the failures, then run 'pipeline advance' again`)
+        reasons.push(timedOut(e)
+          ? `command TIMED OUT after ${timeout / 1000}s (it did not fail — it was stopped): ${resolved.cmd}\n${tail}\nNarrow what it runs, or give this command its own 'timeout:' (seconds) in the profile; this is not a defect of the change`
+          : `command failed (exit ${e.status ?? '?'}): ${resolved.cmd}\n${tail}\nFix the failures, then run 'pipeline advance' again`)
       }
     }
     if (reasons.length) return { ok: false, reasons }
@@ -173,12 +182,15 @@ export const validators = {
           for (const entry of fallback) {
             const resolved = substitute(entry.run, { files, tests, envNumber: ctx.state?.env_number })
             if (resolved.skip) continue
+            const timeout = commandTimeout(entry)
             try {
-              execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout: 600_000, env: commandEnv(ctx) })
+              execSync(resolved.cmd, { cwd: ctx.repoDir, stdio: 'pipe', timeout, env: commandEnv(ctx) })
               ran++
             } catch (e) {
               const tail = lastLines(`${e.stdout ?? ''}\n${e.stderr ?? ''}`, 50)
-              reasons.push(`test_fallback failed (exit ${e.status ?? '?'}): ${resolved.cmd}\n${tail}\nFix the failures, then run 'pipeline advance' again`)
+              reasons.push(timedOut(e)
+                ? `test_fallback TIMED OUT after ${timeout / 1000}s (stopped, not failed): ${resolved.cmd}\n${tail}\nGive it its own 'timeout:' (seconds) in the profile`
+                : `test_fallback failed (exit ${e.status ?? '?'}): ${resolved.cmd}\n${tail}\nFix the failures, then run 'pipeline advance' again`)
             }
           }
           if (reasons.length) return { ok: false, reasons }
@@ -208,11 +220,18 @@ export const validators = {
   no_secrets(ctx) {
     const base = ctx.state?.git?.base || 'master'
     const reasons = []
+    // Files the developer cleared for this run ('pipeline allow-secret'): a
+    // fixture field re-triggered at every subtask gate, four blocks in a row.
+    const allowed = new Set((ctx.state?.secrets_allowed || []).map(a => a.file))
     const scanLine = (file, line) => {
-      if (line.includes('pipeline:allow-secret')) return
+      if (line.includes('pipeline:allow-secret') || allowed.has(file)) return
       for (const [label, re] of SECRET_PATTERNS) {
-        if (re.test(line)) {
-          reasons.push(`possible ${label} added in ${file}: "${line.trim().slice(0, 120)}" — never commit a real credential or secret default; inject it via the environment (per the context '## Decisions' secrets policy). If this is a deliberate dummy value, disarm the line with a 'pipeline:allow-secret' comment.`)
+        const m = line.match(re)
+        if (m) {
+          // A credential-looking key holding a plain word in a test file is a
+          // fixture (`token: 'window-a'`), not a secret.
+          if (label === 'credential assignment' && isTestFile(file, ctx.profile) && /^[a-z][a-z0-9_-]{0,40}$/.test(m[1] ?? '')) return
+          reasons.push(`possible ${label} added in ${file}: "${line.trim().slice(0, 120)}" — never commit a real credential or secret default; inject it via the environment (per the context '## Decisions' secrets policy). If this is a deliberate dummy value, disarm the line with a 'pipeline:allow-secret' comment, or clear the whole file for this run: 'pipeline allow-secret ${file} --reason "<why>"'.`)
           return
         }
       }
@@ -768,6 +787,11 @@ export const validators = {
       }
       const results = readings.map(argv => runEvidence(ctx.repoDir, argv))
       if (results.some(r => r.hits === hits)) continue
+      // A plan describes the code BEFORE the change. After a reopen to PLAN the
+      // run's own edits move a count the plan took honestly (a pilot run was
+      // blocked four times this way), so a `git grep` row also passes when its
+      // count holds at the change's starting point.
+      if (ctx.stageName === 'PLAN' && atBase(ctx).some(sha => readings.some(argv => gitGrepAt(argv, sha) && runEvidence(ctx.repoDir, gitGrepAt(argv, sha)).hits === hits))) continue
       const counted = [...new Set(results.filter(r => !r.error).map(r => r.hits))]
       if (!counted.length) {
         reasons.push(`'## ${sectionName}' row "${where}": the gate could not re-run \`${command}\` — ${results[0].error}. Record a command that runs from the repo root.`)
@@ -1052,7 +1076,7 @@ const SECRET_PATTERNS = [
   ['GitHub token', /\bgh[pousr]_[A-Za-z0-9]{30,}\b/],
   ['JWT', /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/],
   // No leading \b: real keys are compound (sync_support_password, admin_api_key).
-  ['credential assignment', /(?:api[_-]?key|secret[_-]?key|secret|token|password|passwd)\b\s*(?:[:=]|=>)\s*['"][^'"\s]{8,}['"]/i]
+  ['credential assignment', /(?:api[_-]?key|secret[_-]?key|secret|token|password|passwd)\b\s*(?:[:=]|=>)\s*['"]([^'"\s]{8,})['"]/i]
 ]
 
 // Untracked files larger than this are not scannable text (logs, dumps,
@@ -1169,6 +1193,17 @@ function evidenceArgv(cmd) {
   const argv = tokenizeCommand(cmd)
   if (argv.length === 0) return null
   return EVIDENCE_PREFIXES.some(p => p.every((tok, i) => argv[i] === tok)) ? argv : null
+}
+
+// `git grep … [-- paths]` with a commit inserted, so it searches that commit.
+function gitGrepAt(argv, sha) {
+  if (argv[0] !== 'git' || argv[1] !== 'grep') return null
+  const dd = argv.indexOf('--')
+  return dd === -1 ? [...argv, sha] : [...argv.slice(0, dd), sha, ...argv.slice(dd)]
+}
+
+const atBase = ctx => {
+  try { return [diffBase(ctx.repoDir, ctx.state?.git?.base || 'master')].filter(s => /^[0-9a-f]{40}$/.test(s)) } catch { return [] }
 }
 
 function runEvidence(repoDir, argv) {

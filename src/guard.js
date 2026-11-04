@@ -113,7 +113,15 @@ function decide(mode, input) {
       const command = input.tool_input?.command || ''
       const stray = guardStrayTree(command, { repoDir, profile, active })
       if (stray) return stray
-      return run ? guardBash(command, run, repoDir) : allow()
+      // The command's own target names its run before the session's cwd does:
+      // a pilot session in one run's tree ran `git -C <other run's tree> push`
+      // and was judged by the wrong run's stage.
+      const targeted = active.filter(r => r.state.git?.worktree && mentionsPath(command, r.state.git.worktree))
+      const subject = targeted.length === 1 ? targeted[0] : run
+      if (!subject) return allow()
+      const verdict = guardBash(command, subject, targeted.length === 1 ? subject.state.git.worktree : repoDir)
+      // Name the run, so a block is never a puzzle about whose rules applied.
+      return verdict.decision === 'deny' ? deny(`[run ${subject.state.run_id}] ${verdict.message}`) : verdict
     }
     if (mode === 'write') return guardWrite(input.tool_input?.file_path || '', { repoDir, profile, run, active, cwd })
     if (mode === 'observe') return run ? observeUsage(input, run) : allow()

@@ -305,3 +305,18 @@ test('proofStamp: a file the plan creates but that does not exist yet still stam
   assert.notEqual(proofStamp(repo.dir, ['src/app.sh', 'src/planned-but-absent.sh']), stamp,
     'creating the planned file expires proofs taken before it existed')
 })
+
+// A pilot run was blocked four times after a reopen to PLAN: its own edits had
+// moved counts the plan took honestly from the code before the change.
+test('evidence_verified at PLAN: a git grep count that holds at the change\'s starting point passes; at REVIEW it must hold now', () => {
+  const { root } = sandbox()
+  const repo = standardRepo(root, 'ev-base')
+  const ctx = ctxFor({ root, repoDir: repo.dir })
+  planWith(ctx, coupling(['| x | `git grep -n app-v1 -- src` | 1 | the one writer |']))
+  ctx.stageName = 'PLAN'
+  assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, true)
+  repo.write('src/util.sh', 'echo app-v1 too\n') // the run's own edit adds a hit
+  assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, true, 'the plan described the code before the change')
+  ctx.stageName = 'REVIEW'
+  assert.equal(validators.evidence_verified(ctx, 'Coupling').ok, false, 'review re-checks against the code as it is')
+})

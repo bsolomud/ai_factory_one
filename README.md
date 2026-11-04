@@ -237,6 +237,8 @@ Stage agents also use a few verbs directly, and they matter enough to name here:
 | `pipeline round` / `pipeline finding` | The round ledger above. `--missed-by` names the probe the store owes; `--round <n> --rejected` or `--deferred "<sentence for the PR>"` settles a finding of a closed round. |
 | `pipeline retro collect\|finish\|list` | The review retro's data side (see `/pipeline-retro`): gathers reviewer comments on closed run PRs into a private batch, and records them as looked at once the proposals are NDA-clean. |
 | `pipeline nda-check [--self <files>]` | The NDA line, mechanically. Default: the retro proposals, strictly. |
+| `pipeline recertify` | After a reopen: restores the current stage without its agent when the code and its artifact are exactly what it last certified; its checks and gate still run. |
+| `pipeline allow-secret <file> --reason "…"` | Clears one file of the secret scan for this run (fixtures whose field names look like credentials), on the record. |
 | `pipeline permissions [--merge]` | Host allow-rules derived from the repo's own verified commands. Emit-only unless asked. |
 
 Piloting it? See **[PILOT.md](PILOT.md)** for the run-one-ticket playbook and

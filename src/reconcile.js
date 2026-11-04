@@ -80,6 +80,8 @@ function rebuildState({ runDir, config, runId, repoSlug }) {
 
   const state = newState({ runId, repo: repoSlug, stage: config.first, base, branch, baselineUntracked, worktree, startSha: created?.start_sha || null })
   if (worktree && wtEvent.env_number != null) state.env_number = wtEvent.env_number
+  const allowedSecrets = new Map(events.filter(e => e.event === 'secret_allowed').map(e => [e.file, { file: e.file, reason: e.reason }]))
+  if (allowedSecrets.size) state.secrets_allowed = [...allowedSecrets.values()]
   state.gates = gates
 
   if (lastComplete) {

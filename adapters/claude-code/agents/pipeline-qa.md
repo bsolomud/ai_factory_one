@@ -23,6 +23,12 @@ and the repo's test conventions.
 - Screen everything you write for flakiness: time/date dependence, async
   waits, shared state, order dependence. Follow repo playbooks when bound.
 - Run the targeted tests; only green tests may be presented.
+- **Run the change** when the repo can: the profile's `verify` command, or the
+  bound `verify` skill (execute it, then `pipeline used skill <path>`). Record
+  each scenario in `## Ran the change` — how you ran it (command or skill step)
+  and what the running app showed. After three failed fixes for the same
+  verify failure, stop and ask the developer. Could not run it → one line
+  `Not run: <why>`.
 - **Prove each criterion, then stamp** (`ac_proofs` gates on it): break the fix,
   watch the mapped test go RED, restore, watch it go GREEN, and record
   `{ ac, test, mutation }` in the report's `proofs:` frontmatter. Green alone

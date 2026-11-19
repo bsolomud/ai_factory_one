@@ -232,6 +232,7 @@ Stage agents also use a few verbs directly, and they matter enough to name here:
 | `pipeline amend-boundary <path> --reason` | The change needs a file the approved plan did not foresee. Appends one audited line to `## Amendments` (the approved sections stay frozen) and the boundary check honors it. `no_touch` is still refused. The boundary was **816 of 887** recorded block reasons. |
 | `pipeline allow-touch --commit <sha> --reason` | A commit the developer explicitly asked for changed `no_touch` files (e.g. regenerated API docs). Exempts exactly that commit's content from `no_touch` — a later edit is caught again — logged as `touch_allowed` and appended to `## Amendments`. |
 | `pipeline pr-opened <url\|number>` | Right after the PR is opened: records its number, url and the head it was opened at; `pipeline status` shows it as `pr` for CI and PR feedback. |
+| `pipeline base-rules` | REVIEW, first: copies every file the review takes rules from (bound skills, `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `.claude/rules/`, `review_rules`) as the base has them into the run. `RULES_EDITED` → the change rewrites its own rules; the reviewer reads the copies, never the tree (`rules_from_base`). |
 | `pipeline base-health` | A run stacked on a branch other than the trunk: asks the base's own CI whether it is red by itself, so inherited failures read as "base red". TEST requires it on a stacked run. |
 | `pipeline decision-changed --was "…" --now "…" --reason "…"` | The developer reversed an earlier decision. Appends it to the plan's `## Amendments`; the PR draft must then state the new decision word for word, and a PR published before the change must be re-published (`pr-opened` again) before the CI gate passes. |
 | `pipeline round` / `pipeline finding` | The round ledger above. `--missed-by` names the probe the store owes; `--round <n> --rejected` or `--deferred "<sentence for the PR>"` settles a finding of a closed round. |
@@ -312,6 +313,10 @@ commands:                 # capability slots — every value verified by running
     - { when: "generated/**", run: "<regen command>" }
   env_checks:             # can this CHECKOUT run the repo at all? (pipeline doctor --env)
     - { name: "built assets present", run: "<cheap check>", fix: "<the repairing command>" }
+  verify: "<start the app, drive a smoke scenario, exit non-zero on breakage>"   # optional; the TEST gate runs it
+bindings:
+  verify: { source: repo, path: ".claude/skills/verify", sha: "…" }   # optional; an agent drives the app (browser, simulator)
+review_rules: ["docs/review/**"]   # optional — files beyond the defaults a review takes rules from
 test_layout: { "src/**": "tests/" }   # changed file → its tests
 test_file_pattern: "(_test|_spec|\\.test|\\.spec)\\.[^./]+$"  # optional — what counts as a runnable test file (default shown); helpers/factories under test dirs never run
 conventions: { base_branch: master, branch_pattern: "T-<id>" }
@@ -338,3 +343,10 @@ strongest idea in the repo, and they have run on 3 of 29 recorded runs — they
 have no field data yet. Give them five real runs and report what they caught
 against what they false-blocked. A gate added on top of an unmeasured gate is
 how a pipeline accumulates friction it can never justify removing.
+
+That is what a check's `mode:` is for. A new check enters `pipeline.yml` as
+`{ <check>: <param>, mode: observe }`: it runs at every advance, its verdict is
+logged (`check_observed`), it blocks nothing, and `pipeline metrics` reports
+`observed_checks` — per check, the gates where it would have blocked and the
+ones it passed. Read the reasons; once they are real defects, drop the `mode`
+(enforce is the default). `mode: off` parks a check without deleting it.

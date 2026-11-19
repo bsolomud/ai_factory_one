@@ -2,11 +2,11 @@ import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { acAccounting, acceptanceCriteriaIds, acRef, backtickPaths, boundaryAmendments, humanPart, parseArtifact, sections, pathsInSection } from './artifacts.js'
-import { artifactFor } from './config.js'
+import { artifactFor, CHECK_MODES } from './config.js'
 import { proofStamp } from './scan.js'
 import { isStacked } from './basehealth.js'
 import { claimRef, writtenClaims } from './claims.js'
-import { changedFiles, diffBase, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
+import { changedFiles, diffBase, isTestFile, matchesAny, REQUIRED_SLOTS, resolveSlot, reviewRuleGlobs, sourceFilesNeedingSpecs, substitute, targetedTests, untrackedFiles } from './profile.js'
 import { readEvents, SKIP_KINDS } from './state.js'
 
 // Every validator: (ctx, param) → {ok:true} | {ok:false, reasons:[...]} | {skip:true, reason}.
@@ -599,6 +599,70 @@ export const validators = {
     return reasons.length ? { ok: false, reasons } : ok()
   },
 
+  // A green suite says the tests pass, not that the change works: the test can
+  // pass while the feature is broken, and nobody started the app. When the repo
+  // has a way to run the change — a `verify` command (the gate runs it too, as
+  // profile_command) or a bound `verify` skill (an agent drives it: a browser, a
+  // simulator, an API harness) — the test report says what was run and what was
+  // seen, under '## Ran the change'.
+  verify_ran(ctx) {
+    const commands = resolveSlot(ctx.profile, 'verify')
+    const binding = ctx.profile?.bindings?.verify
+    const skill = binding?.source === 'repo' && binding.path ? binding.path : null
+    if (!commands.length && !skill) {
+      return skip("this repo has no way to run a change (no 'verify' command or skill) — only tests were run; add one via '/pipeline onboard'", 'not_configured')
+    }
+    const rel = ctx.stageDef.output
+    const artifact = rel && parseArtifact(artifactAbs(ctx, rel))
+    if (!artifact) return fail(`artifact ${rel} does not exist yet`)
+    const how = skill ? `the bound verify skill (${skill})` : `the profile's verify command (\`${commands[0].run}\`)`
+    const shape = `| Scenario | How I ran it | What I saw |, one row per acceptance criterion or user-visible path the change touches, 'How I ran it' citing the \`command\` or the skill step`
+    const section = sections(artifact.body)['Ran the change']
+    if (section === undefined) {
+      return fail(`this repo can run the change — run it with ${how} and add '## Ran the change' under '# Pipeline details' in ${rel}: ${shape}. Could not run it? Write one line 'Not run: <why>' instead`)
+    }
+    const notRun = section.match(/^\s*Not run:\s*(\S.*)$/im)
+    if (notRun) return skip(`the change was not run (${notRun[1].trim()}) — say so in the PR's Testing notes`, 'other')
+    const table = tableRows(section)
+    if (!table.rows.length) return fail(`'## Ran the change' in ${rel} has no rows — ${shape}`)
+    const reasons = []
+    const howCol = columnIndex(table.header, /how|ran/, 1)
+    const sawCol = columnIndex(table.header, /saw|result|observed/, table.header.length - 1)
+    for (const row of table.rows) {
+      const label = (row[0] ?? '').slice(0, 60)
+      if (!/`[^`]+`/.test(row[howCol] ?? '')) reasons.push(`'## Ran the change' row "${label}": 'How I ran it' cites nothing — name the \`command\` or the skill step you ran`)
+      if (!(row[sawCol] ?? '').trim()) reasons.push(`'## Ran the change' row "${label}": 'What I saw' is empty — what did the running app show?`)
+    }
+    if (skill) {
+      const ref = normRef(skill)
+      const used = readEvents(ctx.runDir).some(e => e.event === 'asset_used' && e.kind === 'skill' && e.stage === ctx.stageName &&
+        (normRef(e.ref) === ref || normRef(e.ref).startsWith(ref + '/')))
+      if (!used) reasons.push(`the bound verify skill was not recorded — run 'pipeline used skill ${skill}'`)
+    }
+    return reasons.length ? { ok: false, reasons } : ok()
+  },
+
+  // The change must not grade itself. When it edits a file the review takes
+  // its rules from (a bound skill, AGENTS.md, REVIEW.md…), a review that read
+  // the working tree was judged by the edit. `pipeline base-rules` puts the
+  // base's copies in the run directory; this check asks that it ran, in this
+  // stage, against the base the diff is taken from now.
+  rules_from_base(ctx) {
+    const globs = reviewRuleGlobs(ctx.profile)
+    const edited = ctxChangedFiles(ctx, { includeUntracked: true }).filter(f => matchesAny(f, globs))
+    if (!edited.length) return ok()
+    const base = atBase(ctx)[0]
+    const snap = readEvents(ctx.runDir).filter(e => e.event === 'base_rules' && e.stage === ctx.stageName).at(-1)
+    const list = edited.slice(0, 5).join(', ') + (edited.length > 5 ? ` and ${edited.length - 5} more` : '')
+    if (!snap) {
+      return fail(`this change edits the rules it is reviewed by (${list}) — run 'pipeline base-rules', review with the base copies it writes (not the files in the tree), and tell the developer under 'What we found' that the rule edits need their own eyes`)
+    }
+    if (base && snap.sha !== base) {
+      return fail(`the base-rules copy was taken at ${String(snap.sha).slice(0, 11)}, but the diff is now taken from ${base.slice(0, 11)} — run 'pipeline base-rules' again and re-check the review against the new copies`)
+    }
+    return ok()
+  },
+
   git_clean_within(ctx) {
     const planRel = artifactFor(ctx.config, '-plan.md')
     if (!planRel) return fail(`cannot enforce the write boundary: no stage in pipeline.yml outputs a '-plan.md' artifact`)
@@ -1034,36 +1098,55 @@ function codeTerms(text) {
 // validator produced a reason. `advance` ignores it (a failure is a failure);
 // `check` (the dry run) needs it to separate real work from the
 // finalization-only stamp an in-progress artifact legitimately lacks.
+// A list item is a bare validator name (- no_secrets), a name→param map
+// (- profile_command: lint_changed), or either of those with a `mode:` key
+// beside it (- { profile_command: verify, mode: observe }; a validator that
+// takes no param is written `- { verify_ran: ~, mode: observe }`).
+export function parseCheck(item) {
+  if (typeof item === 'string') return { name: item, param: undefined, mode: 'enforce' }
+  const { mode = 'enforce', ...rest } = item || {}
+  const [name, param] = Object.entries(rest)[0] || []
+  return { name, param: param ?? undefined, mode }
+}
+
 export function runValidators(ctx) {
   const spec = ctx.stageDef.validate || []
   const reasons = []
   const unverified = []
   const checks = []
+  // Failures of observe-mode checks: what WOULD have blocked. Reported, logged,
+  // never a reason.
+  const observed = []
   for (const item of spec) {
-    // A list item is either a bare validator name (- no_secrets) or a
-    // name→param map (- profile_command: lint_changed). Only validators that
-    // actually consume a param take one — a param on the others is not
-    // accepted, so pipeline.yml can never carry decorative config.
-    const [name, param] = typeof item === 'string' ? [item] : Object.entries(item)[0]
+    // Only validators that actually consume a param take one — a param on the
+    // others is not accepted, so pipeline.yml can never carry decorative config.
+    const { name, param, mode } = parseCheck(item)
     const fn = validators[name]
-    if (!fn) {
-      const reason = `pipeline.yml names unknown validator '${name}'`
+    if (!fn || !CHECK_MODES.includes(mode)) {
+      const reason = fn ? `pipeline.yml gives '${name}' unknown mode '${mode}' — one of: ${CHECK_MODES.join(', ')}` : `pipeline.yml names unknown validator '${name}'`
       reasons.push(reason)
-      checks.push({ name, param, status: 'fail', reasons: [reason] })
+      checks.push({ name, param, mode, status: 'fail', reasons: [reason] })
+      continue
+    }
+    if (mode === 'off') {
+      checks.push({ name, param, mode, status: 'off', reasons: [] })
       continue
     }
     const result = fn(ctx, param)
     if (result.skip) {
       unverified.push({ text: `${ctx.stageName}/${name}: ${result.reason}`, kind: result.kind || 'other' })
-      checks.push({ name, param, status: 'skip', reasons: [result.reason] })
+      checks.push({ name, param, mode, status: 'skip', reasons: [result.reason] })
+    } else if (!result.ok && mode === 'observe') {
+      observed.push(...result.reasons.map(r => `${ctx.stageName}/${name} (observe — not blocking): ${r}`))
+      checks.push({ name, param, mode, status: 'observed_fail', reasons: result.reasons })
     } else if (!result.ok) {
       reasons.push(...result.reasons)
-      checks.push({ name, param, status: 'fail', reasons: result.reasons })
+      checks.push({ name, param, mode, status: 'fail', reasons: result.reasons })
     } else {
-      checks.push({ name, param, status: 'pass', reasons: [] })
+      checks.push({ name, param, mode, status: 'pass', reasons: [] })
     }
   }
-  return { ok: reasons.length === 0, reasons, unverified, checks }
+  return { ok: reasons.length === 0, reasons, unverified, checks, observed }
 }
 
 // Kept deliberately literal-value shaped: an ENV lookup or interpolation never

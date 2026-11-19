@@ -42,11 +42,13 @@ actually proven — liveness is not the same guarantee as a real run.
 
 ### 2. Skill binding — the core question
 For each pipeline capability that has built-in behavior — **plan, review,
-test, ci, knowledge** — check `candidates` for a repo-local equivalent
+test, ci, knowledge, verify** — check `candidates` for a repo-local equivalent
 (e.g. a repo review skill vs the pipeline's built-in reviewer). The built-in
 behind each capability: plan/test → the stage runbook's own procedure;
 review → the review runbook's built-in passes; **ci → the `ci-triage`
-skill**; knowledge → the pipeline's learned-facts store. Present a
+skill**; knowledge → the pipeline's learned-facts store; verify → none (a
+repo skill that starts the app and drives it — a browser, a simulator, an API
+harness — is the only source; no built-in can know how this app runs). Present a
 table: capability | repo asset found | built-in equivalent. Then ask the
 developer to choose ONE binding mode:
 
@@ -79,6 +81,21 @@ changelogs), propose `keyed_files: [{ glob, key }]` — `key` a regex on the fil
 name whose first group is the key; the PR and CI gates check new ones against
 the base tip. Prefill from detection (and from `existing_profile` when
 re-onboarding). Never ask about task-tracker access here.
+
+Ask how a change is **run**, not just tested: `commands.verify` — one fast,
+reliable command that starts the app (or the service, or the CLI) and drives
+a smoke scenario, exiting non-zero when it breaks. The TEST gate runs it, and
+QA records what the running app showed. When running the app needs an agent
+(clicking through a browser, a simulator), bind a repo `verify` skill instead,
+or as well. Leave both empty if the developer has none — tests still run; the
+gate only notes that nothing ran the change. A slow or flaky verify does more
+harm than none: an agent learns to re-run it instead of fixing the code.
+
+Ask whether files beyond the defaults hold rules an agent reviews by
+(`AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `.claude/rules/`, and every bound
+skill are already covered) — list them as `review_rules:` globs. The review
+reads all of them as they are on the base, so a change cannot rewrite its own
+rules.
 
 Also ask for `commands.env_checks` — the cheap commands that prove a checkout
 can actually RUN this repo, each optionally carrying `name:` and `fix:`:

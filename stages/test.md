@@ -12,7 +12,8 @@ gets a test or an explicit, written reason it doesn't.
 ## Output
 `artifacts/04-test-report.md`. Above the `# Pipeline details` line, for the
 developer: What we checked (and Questions for you, only when there is one).
-Below it: Coverage audit, Risk-to-test map, Added tests, Deferred.
+Below it: Coverage audit, Risk-to-test map, Added tests, Deferred — and Ran
+the change when the repo can run one.
 
 ## Procedure (executed by `pipeline-qa`, fresh context)
 - Audit coverage against the branch diff; build the risk-to-test map as a table
@@ -40,6 +41,18 @@ Below it: Coverage audit, Risk-to-test map, Added tests, Deferred.
   The stamp hashes the plan's `## Affected files`, so the ledger EXPIRES the
   moment the code under test changes — which is what stops a later fix round
   from inheriting a proof its own change already invalidated.
+- **Run the change, not only its tests** (`verify_ran`). A unit test can pass
+  while the feature is broken; starting the app and using it cannot be fooled
+  that way. When the profile has a `verify` command, run it; when it binds a
+  `verify` skill, execute that skill (it drives the app — a browser, a
+  simulator, an API harness) and record `pipeline used skill <its path>`. For
+  each acceptance criterion and user-visible path the change touches, write a
+  row in `## Ran the change`: what you did, citing the command or skill step,
+  and what the running app showed. The gate runs the `verify` command itself
+  as well. **Three failed fix attempts against the same verify failure: stop**
+  and put it to the developer — a fourth guess costs more than their minute.
+  No way to run it in this checkout → one line `Not run: <why>`; it reaches
+  the PR's Testing notes. Neither configured → skip the section.
 - **Self-certify with `pipeline check` before setting `status: complete`.** It
   runs the gate's own validators — the criterion accounting, the proof ledger
   and its staleness stamp, the profile checks — and records nothing. A stale

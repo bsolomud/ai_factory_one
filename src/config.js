@@ -2,6 +2,14 @@ import fs from 'node:fs'
 import YAML from 'yaml'
 import { asset } from './paths.js'
 
+// How a gate check acts on its verdict. A new check starts in `observe`: it
+// runs at every advance and its verdict is recorded, but a failure blocks
+// nothing — so before it is allowed to block, the log shows how often it would
+// have and whether those were real. `pipeline metrics` reports the tally;
+// promoting it to `enforce` is a one-line edit. `off` keeps the line in
+// pipeline.yml without running it.
+export const CHECK_MODES = ['enforce', 'observe', 'off']
+
 // pipeline.yml is the FSM in data. It must stay repo-agnostic: capability slots
 // only, zero concrete commands (enforced by test/agnostic-lint.test.js).
 export function loadPipeline(file = asset('pipeline.yml')) {
@@ -13,6 +21,12 @@ export function loadPipeline(file = asset('pipeline.yml')) {
     if (!def.next) throw new Error(`pipeline.yml: stage ${name} has no 'next'`)
     if (def.next !== 'DONE' && !doc.stages[def.next]) {
       throw new Error(`pipeline.yml: stage ${name} points to unknown stage '${def.next}'`)
+    }
+    for (const item of def.validate || []) {
+      const mode = typeof item === 'object' && item ? item.mode : undefined
+      if (mode !== undefined && !CHECK_MODES.includes(mode)) {
+        throw new Error(`pipeline.yml: stage ${name} gives a check unknown mode '${mode}' — one of: ${CHECK_MODES.join(', ')}`)
+      }
     }
   }
   return { stages: doc.stages, first, order: chainOrder(doc.stages, first) }

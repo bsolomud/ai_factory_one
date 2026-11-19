@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { hashAtRef, hashPath, proofStamp, scanAssets } from './scan.js'
 import { artifactFor, loadPipeline } from './config.js'
-import { changedFiles, commandPrefix, currentBranch, detectBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, substitute, treeDigest, validateProfile, untrackedFiles } from './profile.js'
+import { changedFiles, commandPrefix, currentBranch, detectBase, diffBase, loadProfile, matchesAny, resolveSlot, REQUIRED_SLOTS, reviewRuleGlobs, substitute, treeDigest, validateProfile, untrackedFiles } from './profile.js'
 import { aggregate, runMetrics } from './metrics.js'
 import { boundaryAmendments, parseArtifact, pathsInSection, sections } from './artifacts.js'
 import { reconcile } from './reconcile.js'
@@ -374,6 +374,7 @@ const commands = {
       blocking,
       pending_finalization: finalization,
       unverified: surfaced.map(u => u.text),
+      ...(result.observed.length && { observed: result.observed }),
       next_action: blocking.length
         ? `${blocking.length} check(s) would BLOCK 'pipeline advance' — fix them here, then re-run 'pipeline check'. Nothing was recorded; this is a dry run.`
         : finalization.length
@@ -421,6 +422,7 @@ const commands = {
       return emit({ verdict: 'NOT_STARTED', stage: stageName, note: `${stageName} has not been worked on yet — its artifact is still the template. Dispatch the stage's agent (/pipeline work); do not advance an empty stage.` }, 1)
     }
     const result = runValidators({ runDir, repoDir: ctx.repoDir, profile: ctx.profile, state, stageDef, stageName, config })
+    recordObserved(runDir, state, stageName, result)
     // Legacy runs stored unverified as plain strings; normalize to objects so
     // the stage-scoping below has one shape to handle. A legacy string only
     // survives as a gap if it reads like one.
@@ -446,7 +448,7 @@ const commands = {
         reason_texts: result.reasons.map(r => r.split('\n')[0].slice(0, 200))
       })
       writeState(runDir, state)
-      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text) }, 1)
+      return emit({ verdict: 'BLOCKED', stage: stageName, reasons: result.reasons, unverified: surfaced.map(u => u.text), ...(result.observed.length && { observed: result.observed }) }, 1)
     }
     for (const u of result.unverified) appendEvent(runDir, { event: 'check_skipped', stage: stageName, reason: u.text, kind: u.kind })
     recordProbeUse(ctx, runDir, stageName, stageDef.output)
@@ -473,6 +475,7 @@ const commands = {
       stage: stageName,
       subtask: state.substate.subtask ?? undefined,
       unverified: state.unverified.map(u => u.text ?? u),
+      ...(result.observed.length && { observed: result.observed }),
       human_required: !!gate.human_required,
       next_action: `validators passed — present the artifact/diff to the developer for review; on their explicit yes run '/pipeline approve'. STOP here.`
     })
@@ -676,6 +679,39 @@ const commands = {
       UNKNOWN: `could not tell (${health.reason}) — for a failure you believe pre-existing, run that test at the base tip before calling it so`
     }[health.verdict]
     return emit({ ...health, next_action: next })
+  },
+
+  // The rules a review reads, as the base has them. A change that edits its
+  // own review skill, AGENTS.md or REVIEW.md would otherwise be judged by the
+  // edit — a passed review against rules the change itself wrote proves
+  // nothing. Copies every rule file at the diff base into <run>/base-rules/;
+  // the reviewer reads those, and `rules_from_base` checks this ran.
+  'base-rules'(_, flags) {
+    const { ctx, runDir, state } = loadRun(flags)
+    const base = state.git?.base || 'master'
+    const sha = diffBase(ctx.repoDir, base)
+    const globs = reviewRuleGlobs(ctx.profile)
+    const files = execFileSync('git', ['ls-tree', '-r', '--name-only', sha], { cwd: ctx.repoDir, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+      .split('\n').filter(f => f && matchesAny(f, globs))
+    const dest = path.join(runDir, 'base-rules')
+    fs.rmSync(dest, { recursive: true, force: true })
+    for (const f of files) {
+      const out = path.join(dest, f)
+      fs.mkdirSync(path.dirname(out), { recursive: true })
+      fs.writeFileSync(out, execFileSync('git', ['show', `${sha}:${f}`], { cwd: ctx.repoDir, maxBuffer: 64 * 1024 * 1024 }))
+    }
+    const edited = changedFiles(ctx.repoDir, base, { includeUntracked: true }).filter(f => matchesAny(f, globs))
+    appendEvent(runDir, { event: 'base_rules', stage: state.stage, sha, files: files.length, edited })
+    return emit({
+      verdict: edited.length ? 'RULES_EDITED' : 'OK',
+      base_sha: sha,
+      dir: dest,
+      files,
+      edited,
+      next_action: edited.length
+        ? `this change edits ${edited.length} rule file(s): ${edited.join(', ')}. Read every rule file and the bound skill from ${dest}/<path>, NOT from the tree. Judge the edits themselves as code, and tell the developer under 'What we found' that the change rewrites rules it is checked by.`
+        : `the change edits no rule file — the tree's copies equal these; review as usual`
+    })
   },
 
   // Widen the approved plan's write boundary, on the record. The boundary check
@@ -1619,6 +1655,20 @@ function appendToSection(file, sectionName, line) {
   while (insert > headIdx + 1 && lines[insert - 1].trim() === '') insert--
   lines.splice(insert, 0, line)
   fs.writeFileSync(file, lines.join('\n'))
+}
+
+// Every verdict of an observe-mode check, pass or fail, so `pipeline metrics`
+// can say how often a check would have blocked before anyone lets it block.
+function recordObserved(runDir, state, stageName, result) {
+  for (const c of result.checks) {
+    if (c.mode !== 'observe' || !['pass', 'observed_fail'].includes(c.status)) continue
+    appendEvent(runDir, {
+      event: 'check_observed', stage: stageName, subtask: state.substate?.subtask ?? undefined,
+      check: c.name, ...(c.param != null && !Array.isArray(c.param) && { target: c.param }),
+      verdict: c.status === 'pass' ? 'pass' : 'fail',
+      ...(c.reasons.length && { reason_texts: c.reasons.map(r => r.split('\n')[0].slice(0, 200)) })
+    })
+  }
 }
 
 function transition(runDir, config, state, { by }) {

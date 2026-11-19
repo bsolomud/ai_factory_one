@@ -9,6 +9,24 @@ import YAML from 'yaml'
 // "not configured", not an UNVERIFIED coverage hole.
 export const REQUIRED_SLOTS = ['lint_changed', 'test_targeted']
 
+// The files a review takes its rules from. A change that edits them must not
+// be judged by its own edit — the reviewer reads them as they are on the base
+// (`pipeline base-rules`). Every skill or doc the profile binds from the repo,
+// the agent instruction files at the root, and whatever the profile adds under
+// `review_rules:`.
+export const RULE_FILES = ['AGENTS.md', 'CLAUDE.md', 'REVIEW.md', '.claude/rules/**']
+
+export function reviewRuleGlobs(profile) {
+  const bound = Object.values(profile?.bindings || {})
+    .filter(b => b?.source === 'repo' && typeof b.path === 'string' && b.path)
+    .flatMap(b => {
+      const p = b.path.replace(/^\.\//, '').replace(/\/$/, '')
+      return [p, `${p}/**`]
+    })
+  const extra = Array.isArray(profile?.review_rules) ? profile.review_rules.filter(g => typeof g === 'string') : []
+  return [...new Set([...RULE_FILES, ...bound, ...extra])]
+}
+
 export function loadProfile(file) {
   if (!fs.existsSync(file)) return null
   return YAML.parse(fs.readFileSync(file, 'utf8'))
@@ -49,6 +67,7 @@ export function validateProfile(profile) {
     if (typeof profile.test_file_pattern !== 'string') errors.push("'test_file_pattern' must be a string (a JS regex)")
     else try { new RegExp(profile.test_file_pattern) } catch (e) { errors.push(`'test_file_pattern' is not a valid regex: ${e.message}`) }
   }
+  if ('review_rules' in profile && (!Array.isArray(profile.review_rules) || profile.review_rules.some(g => typeof g !== 'string'))) errors.push("'review_rules' must be a list of globs — extra files a review takes its rules from")
   const base = profile.conventions?.base_branch
   if (!base) warnings.push("no conventions.base_branch — defaulting to 'master'; set it if the repo uses 'main'")
 

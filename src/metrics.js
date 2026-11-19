@@ -151,6 +151,10 @@ export function runMetrics(runDir, runId, config = null) {
     checks_skipped_not_configured: notConfiguredSkips,
     checks_skipped_declared_na: declaredNaSkips,
     checks_skipped_no_target: skips.length - noCommandSkips - notConfiguredSkips - declaredNaSkips,
+    // Observe-mode checks: per check, the gates (stage, subtask) where it would
+    // have blocked at least once vs the ones it only ever passed — the evidence
+    // for promoting it to enforce, or for fixing its false alarms first.
+    observed_checks: observedChecks(events),
     // Rework: how much the run had to backtrack. reopened events are explicit
     // backward moves (e.g. a late fix at PR reopening IMPLEMENT); stage_reentries
     // counts every entry into a stage beyond its first. High rework explains a
@@ -165,6 +169,21 @@ export function runMetrics(runDir, runId, config = null) {
     ...(acCoverage(runDir, config) ?? {}),
     ...(reviewFindings(runDir, config) ?? {})
   }
+}
+
+function observedChecks(events) {
+  const gates = {}
+  for (const e of events) {
+    if (e.event !== 'check_observed') continue
+    const name = e.target ? `${e.check}:${e.target}` : e.check
+    const key = `${e.stage}#${e.subtask ?? ''}`
+    const g = (gates[name] ??= {})
+    g[key] = g[key] === 'fail' || e.verdict === 'fail' ? 'fail' : 'pass'
+  }
+  return Object.fromEntries(Object.entries(gates).map(([name, g]) => {
+    const vs = Object.values(g)
+    return [name, { would_block: vs.filter(v => v === 'fail').length, passed: vs.filter(v => v === 'pass').length }]
+  }))
 }
 
 // Both artifact-derived helpers locate their file via artifactFor(config, …)
@@ -237,6 +256,18 @@ export function aggregate(runsMetrics) {
     total_agents_spawned: sum(runsMetrics.map(m => m.agents_spawned)),
     total_rework_cycles: sum(runsMetrics.map(m => m.rework_cycles || 0)),
     total_feedback_notes: sum(runsMetrics.map(m => m.feedback_notes)),
+    // A check is ready for enforce when would_block counts only real defects:
+    // read the runs' check_observed reasons before promoting it.
+    observed_checks: (() => {
+      const out = {}
+      for (const m of runsMetrics) {
+        for (const [k, v] of Object.entries(m.observed_checks || {})) {
+          const o = (out[k] ??= { would_block: 0, passed: 0, runs: 0 })
+          o.would_block += v.would_block; o.passed += v.passed; o.runs += 1
+        }
+      }
+      return out
+    })(),
     note: lowSample
       ? `only ${finished} finished run(s) — the mean rates below are anecdotal, NOT a trend; don't read a single run as a quality signal. Need ${MIN_TREND_RUNS}+ runs.`
       : `median_rounds_to_merge is THE target (aim ≤2) — read it together with runs_with_round_ledger, since runs without a recorded round are unmeasured, not clean. findings_missed_by names the probes the knowledge store still owes; learning_capture_rate says whether any of it is being written down. human_rounds/first_pass_green_rate/gate_edit_rate remain the in-run quality signals.`

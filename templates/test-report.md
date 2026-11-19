@@ -57,6 +57,17 @@ proof_stamp:
 ## Added tests
 <!-- Tests written/extended in this stage. Only green tests are presented. -->
 
+## Ran the change
+<!-- Only when the repo can run a change (profile 'verify' command or a bound
+     verify skill; machine-checked: verify_ran). The app was started and the
+     change driven like a user would — tests can pass while the feature is
+     broken. One row per acceptance criterion or user-visible path.
+     | Scenario | How I ran it | What I saw |
+     |----------|--------------|------------|
+     | AC#1 — the new greeting shows | `<verify command>` / skill step 2 | page shows "Hello" |
+     Could not run it? One line instead: 'Not run: <why>' — it reaches the PR.
+     Delete the section when the repo has no way to run a change. -->
+
 ## Base health
 <!-- Only for a run stacked on a branch other than the trunk, and required
      when 'pipeline base-health' says RED (machine-checked: base_health): each

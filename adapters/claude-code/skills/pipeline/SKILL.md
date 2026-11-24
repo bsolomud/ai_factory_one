@@ -49,8 +49,9 @@ line only when an item needs a word on what it is or why.
 - **Other:** — carried-forward notes / FYI (deferred items, follow-ups) that
   don't belong above.
 
-If a gate is open, end with the one-line approval question (see
-`/pipeline approve`). Keep it tight: if an item needs detail, OFFER to open the
+If a gate is open, end with the approval question (see `/pipeline approve`),
+asked through the picker below — never as text the developer has to type a
+reply to. Keep it tight: if an item needs detail, OFFER to open the
 artifact/diff instead of inlining it. Example:
 
 ```
@@ -65,12 +66,35 @@ Skipped:
    Description: label-gated behind run_full_suite; the spec passed locally in TEST.
 
 Need you on this:
-1. Approve advancing past the CI gate to SCRIBE? (reply yes)
-2. Add the run_full_suite label so CI runs the suite too? Your call — I won't unless you ask.
+1. Approve advancing past the CI gate to SCRIBE?
+2. Add the run_full_suite label so CI runs the suite too?
 
 Other:
 1. Two ops-owned items deferred (proxy header provenance; a web-server passthrough rule).
 ```
+
+(Both asks then go into one picker call: `Yes, approve (Recommended)` /
+`No, change it`; `Leave it off (Recommended)` / `Add the label`.)
+
+### Every ask is a pick, not a typed reply
+
+The developer answers by choosing, never by typing. After printing the report,
+put EVERY **Need you on this** item (the gate approval included) and every
+other question you put to the developer — CONTEXT questions, `base_question`,
+onboarding choices, per-comment PR-feedback decisions — into ONE
+`AskUserQuestion` call:
+- one question per item, `multiSelect: false` — exactly one answer each;
+- 2–4 options, each a complete answer (`Yes, approve` / `No, change it`;
+  `A — …` / `B — …`; the proposed default value). Put your recommendation
+  first with ` (Recommended)`; the option's `description` carries its cost or
+  consequence in one line;
+- `header` ≤12 chars; the question text stands on its own (the dialog may
+  hide the report);
+- more than 4 items → several calls of ≤4, in report order;
+- don't add a free-text option — "Other" is always there for the rare case.
+
+A chosen option IS the developer's answer in their own words: use its label
+(plus any note they typed) verbatim as the `--note` / developer input.
 
 ### Writing for the developer — translate, don't relay
 
@@ -82,8 +106,8 @@ pipeline's internals. Rules:
 - NO internal vocabulary in developer-facing lines: slot, UNVERIFIED,
   substate, artifact, frontmatter, write boundary, human_required, validator
   or skip-kind names. Say files, commands, and outcomes instead.
-- One plain ask per **Need you on this** item, ≤2 lines, answerable in a
-  word ("yes", "A or B", a value).
+- One plain ask per **Need you on this** item, ≤2 lines, answerable with
+  one pick (see above).
 - **In the developer's language.** Talk to them in the language they write
   to you in, and pass it to every stage agent as `developer_language` in the
   handoff, so the questions and summaries they write arrive in it too. Code,
@@ -476,8 +500,9 @@ in the audit log. Harvest mines them now, without advancing anything:
    Did this / Skipped / Need you on this / Other). The gate ask goes under
    **Need you on this**; every `unverified` entry the CLI returned for THIS
    gate goes under **Skipped**, translated per the writing rules.
-2. Ask for explicit confirmation; WAIT.
-3. Only on an explicit yes in the developer's own words:
+2. Ask for explicit confirmation through the picker (`Yes, approve` /
+   `No, change it`, plus any other open item as its own question); WAIT.
+3. Only on an explicit yes — the developer picking the approve option counts:
    `pipeline approve --note "<their words>"`. If the developer changed the
    artifact (or asked you to) before approving, add `--edited` — this feeds
    the gate-edit-rate quality metric, so be honest about it.
